@@ -388,4 +388,19 @@ struct scmi_power_state_change_requested_report {
 	u32 power_state;
 };
 
+struct scmi_perf_limits_report {
+	u64 timestamp;
+	u32 agent_id;
+	u32 domain_id;
+	u32 range_max;
+	u32 range_min;
+};
+
+struct scmi_perf_level_report {
+	u64 timestamp;
+	u32 agent_id;
+	u32 domain_id;
+	u32 performance_level;
+};
+
 #endif /* _LINUX_SCMI_PROTOCOL_H */
