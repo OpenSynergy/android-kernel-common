@@ -410,4 +410,10 @@ struct scmi_sensor_trip_point_report {
 	u32 trip_point_desc;
 };
 
+struct scmi_reset_issued_report {
+	u64 timestamp;
+	u32 domain_id;
+	u32 reset_state;
+};
+
 #endif /* _LINUX_SCMI_PROTOCOL_H */
