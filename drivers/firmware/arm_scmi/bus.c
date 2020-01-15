@@ -79,6 +79,11 @@ static int scmi_dev_probe(struct device *dev)
 	if (!scmi_dev->handle)
 		return -EPROBE_DEFER;
 
+#if IS_ENABLED(CONFIG_IIO_SCMI_STUB)
+	idr_replace(&scmi_protocols, &scmi_protocol_dummy_init,
+		    scmi_dev->protocol_id);
+#endif
+
 	ret = scmi_protocol_init(scmi_dev->protocol_id, scmi_dev->handle);
 	if (ret)
 		return ret;

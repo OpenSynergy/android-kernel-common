@@ -1,0 +1,19 @@
+#
+# IIO over SCMI
+#
+# When adding new entries keep the list in alphabetical order
+
+menu "IIO SCMI Sensors"
+
+config IIO_SCMI
+	tristate "IIO SCMI"
+	help
+	  Say yes here to build support for IIO SCMI Driver. This driver provides
+	  support for accelerometer and gyroscope sensors available on SCMI based platforms.
+
+config IIO_SCMI_STUB
+	tristate "IIO over SCMI sensor stub"
+	help
+	  Say yes here to build support for the stub ARM Sensor protocol SCMI device
+
+endmenu
