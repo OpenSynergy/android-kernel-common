@@ -416,4 +416,12 @@ struct scmi_reset_issued_report {
 	u32 reset_state;
 };
 
+struct scmi_base_error_report {
+	u64 timestamp;
+	u32 agent_id;
+	bool fatal;
+	u16 cmd_count;
+	u64 reports[8192];
+};
+
 #endif /* _LINUX_SCMI_PROTOCOL_H */
