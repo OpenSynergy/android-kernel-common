@@ -9,8 +9,20 @@
 #ifndef _SCMI_NOTIFY_H
 #define _SCMI_NOTIFY_H
 
+#include <linux/bug.h>
 #include <linux/device.h>
 #include <linux/types.h>
+
+#define MAP_EVT_TO_ENABLE_CMD(id, map)			\
+({							\
+	int ret = -1;					\
+							\
+	if (likely((id) < ARRAY_SIZE((map))))		\
+		ret = (map)[(id)];			\
+	else						\
+		WARN(1, "UN-KNOWN evt_id:%d\n", (id));	\
+	ret;						\
+})
 
 /**
  * struct scmi_event  - Describes an event to be supported
