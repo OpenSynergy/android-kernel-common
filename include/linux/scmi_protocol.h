@@ -146,26 +146,172 @@ struct scmi_power_ops {
 			 u32 *state);
 };
 
+struct scmi_sensor_reading {
+	s32 sensor_value_low;
+	s32 sensor_value_high;
+	u32 timestamp_low;
+	u32 timestamp_high;
+};
+
+struct scmi_extended_attrs {
+	s32 min_range_low;
+	s32 min_range_high;
+	s32 max_range_low;
+	s32 max_range_high;
+};
+
+struct scmi_sensor_axis_info {
+	u32 id;
+	u8 type;
+	s8 scale;
+	char name[SCMI_MAX_STR_SIZE];
+	bool extended_attrs;
+	struct scmi_extended_attrs attrs;
+};
+
+struct scmi_sensor_intervals_info {
+	bool segmented;
+	u32 count;
+	u32 *desc;
+};
+
 struct scmi_sensor_info {
 	u32 id;
 	u8 type;
 	s8 scale;
 	u8 num_trip_points;
 	bool async;
+	bool update;
+	bool timestamped;
+	s8 tstamp_scale;
+	u8 num_axis;
+	struct scmi_sensor_axis_info *axis;
+	struct scmi_sensor_intervals_info intervals;
+	u32 sensor_config;
+#define SCMI_SENSOR_CFG_GET_UPDATE_SECS(x)	(((x) >> 16) & 0xffff)
+#define SCMI_SENSOR_CFG_SET_UPDATE_SECS(x, v)	((x) | ((u32)(v) << 16))
+
+#define SCMI_SENSOR_CFG_GET_UPDATE_MULTI(x)	(((x) >> 11) & 0x1f)
+#define SCMI_SENSOR_CFG_SET_UPDATE_MULTI(x, v)	((x) | ((s16)(v) << 11))
+
+#define SCMI_SENSOR_CFG_SET_AUTO_ROUND_UP(x)	((x) | BIT(10))
+#define SCMI_SENSOR_CFG_SET_ROUND_UP(x)		(((x) & ~BIT(10)) | BIT(9))
+#define SCMI_SENSOR_CFG_SET_ROUND_DOWN(x)	((x) & ~GENMASK(10, 9))
+
+#define SCMI_SENSOR_CFG_IS_TSTAMP_ENABLED(x)	((x) & BIT(1))
+#define SCMI_SENSOR_CFG_SET_TSTAMP_ENABLED(x)	((x) | BIT(1))
+#define SCMI_SENSOR_CFG_SET_TSTAMP_DISABLED(x)	((x) & ~BIT(1))
+
+#define SCMI_SENSOR_CFG_IS_ENABLED(x)		((x) & BIT(0))
+#define SCMI_SENSOR_CFG_SET_ENABLE(x)		((x) | BIT(0))
+#define SCMI_SENSOR_CFG_SET_DISABLE(x)		((x) & ~BIT(0))
 	char name[SCMI_MAX_STR_SIZE];
+	bool extended_scalar_attrs;
+	u32 sensor_power;
+	struct scmi_extended_attrs scalar_attrs;
 };
 
 /*
  * Partial list from Distributed Management Task Force (DMTF) specification:
- * DSP0249 (Platform Level Data Model specification)
+ * DSP0248 (Platform Level Data Model for Platform Monitoring and Control
+ * specification)
  */
 enum scmi_sensor_class {
 	NONE = 0x0,
+	UNSPEC = 0x1,
 	TEMPERATURE_C = 0x2,
+	TEMPERATURE_F = 0x3,
+	TEMPERATURE_K = 0x4,
 	VOLTAGE = 0x5,
 	CURRENT = 0x6,
 	POWER = 0x7,
 	ENERGY = 0x8,
+	CHARGE = 0x9,
+	VOLTAMPERE = 0xA,
+	NITS = 0xB,
+	LUMENS = 0xC,
+	LUX = 0xD,
+	CANDELAS = 0xE,
+	KPA = 0xF,
+	PSI = 0x10,
+	NEWTON = 0x11,
+	CFM = 0x12,
+	RPM = 0x13,
+	HERTZ = 0x14,
+	SECS = 0x15,
+	MINS = 0x16,
+	HOURS = 0x17,
+	DAYS = 0x18,
+	WEEKS = 0x19,
+	MILS = 0x1A,
+	INCHES = 0x1B,
+	FEET = 0x1C,
+	CUBIC_INCHES = 0x1D,
+	CUBIC_FEET = 0x1E,
+	METERS = 0x1F,
+	CUBIC_CM = 0x20,
+	CUBIC_METERS = 0x21,
+	LITERS = 0x22,
+	FLUID_OUNCES = 0x23,
+	RADIANS = 0x24,
+	STERADIANS = 0x25,
+	REVOLUTIONS = 0x26,
+	CYCLES = 0x27,
+	GRAVITIES = 0x28,
+	OUNCES = 0x29,
+	POUNDS = 0x2A,
+	FOOT_POUNDS = 0x2B,
+	OUNCE_INCHES = 0x2C,
+	GAUSS = 0x2D,
+	GILBERTS = 0x2E,
+	HENRIES = 0x2F,
+	FARADS = 0x30,
+	OHMS = 0x31,
+	SIEMENS = 0x32,
+	MOLES = 0x33,
+	BECQUERELS = 0x34,
+	PPM = 0x35,
+	DECIBELS = 0x36,
+	DBA = 0x37,
+	DBC = 0x38,
+	GRAYS = 0x39,
+	SIEVERTS = 0x3A,
+	COLOR_TEMP_K = 0x3B,
+	BITS = 0x3C,
+	BYTES = 0x3D,
+	WORDS = 0x3E,
+	DWORDS = 0x3F,
+	QWORDS = 0x40,
+	PERCENTAGE = 0x41,
+	PASCALS = 0x42,
+	COUNTS = 0x43,
+	GRAMS = 0x44,
+	NEWTON_METERS = 0x45,
+	HITS = 0x46,
+	MISSES = 0x47,
+	RETRIES = 0x48,
+	OVERRUNS = 0x49,
+	UNDERRUNS = 0x4A,
+	COLLISIONS = 0x4B,
+	PACKETS = 0x4C,
+	MESSAGES = 0x4D,
+	CHARS = 0x4E,
+	ERRORS = 0x4F,
+	CORRECTED_ERRS = 0x50,
+	UNCORRECTABLE_ERRS = 0x51,
+	SQ_MILS = 0x52,
+	SQ_INCHES = 0x53,
+	SQ_FEET = 0x54,
+	SQ_CM = 0x55,
+	SQ_METERS = 0x56,
+	RADIANS_SEC = 0x57,
+	BPM = 0x58,
+	METERS_SEC_SQUARED = 0x59,
+	METERS_SEC = 0x5A,
+	CUBIC_METERS_SEC = 0x5B,
+	MM_MERCURY = 0x5C,
+	RADIANS_SEC_SQAURED = 0x5D,
+	OEM_UNIT = 0xFF
 };
 
 /**
@@ -178,6 +324,15 @@ enum scmi_sensor_class {
  *	the trip-points
  * @trip_point_config: selects and configures a trip-point of interest
  * @reading_get: gets the current value of the sensor
+ * @reading_get_timestamped: gets the current value and timestamp, when
+ *			     available, of the sensor. (as of v2.1 spec)
+ *			     Supports multi-axis sensors for sensors which
+ *			     supports it and if the @reading array size of
+ *			     @count entry equals the sensor num_axis
+ * @config_get: Get sensor current configuration
+ * @config_set: Set sensor current configuration
+ * @continuous_update_notify: Enable continuos update notifications for the
+ *			     specified sensor
  */
 struct scmi_sensor_ops {
 	int (*count_get)(const struct scmi_handle *handle);
@@ -190,6 +345,15 @@ struct scmi_sensor_ops {
 				 u32 sensor_id, u8 trip_id, u64 trip_value);
 	int (*reading_get)(const struct scmi_handle *handle, u32 sensor_id,
 			   u64 *value);
+	int (*reading_get_timestamped)(const struct scmi_handle *handle,
+				       u32 sensor_id, u8 count,
+				       struct scmi_sensor_reading *readings);
+	int (*config_get)(const struct scmi_handle *handle,
+			  u32 sensor_id, u32 *sensor_config);
+	int (*config_set)(const struct scmi_handle *handle,
+			  u32 sensor_id, u32 sensor_config);
+	int (*continuous_update_notify)(const struct scmi_handle *handle,
+				        u32 sensor_id, bool enable);
 };
 
 /**
@@ -408,6 +572,14 @@ struct scmi_sensor_trip_point_report {
 	u32 agent_id;
 	u32 sensor_id;
 	u32 trip_point_desc;
+};
+
+struct scmi_sensor_update_report {
+	u64 timestamp;
+	u32 agent_id;
+	u32 sensor_id;
+	u8 readings_count;
+	struct scmi_sensor_reading readings[0];
 };
 
 struct scmi_reset_issued_report {
