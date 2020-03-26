@@ -62,6 +62,15 @@ config ARM_SCMI_POWER_DOMAIN
 	  will be called scmi_pm_domain. Note this may needed early in boot
 	  before rootfs may be available.
 
+config ARM_SCMI_IIODEV
+	tristate "ARM SCMI Protocol based IIO device"
+	depends on ARM_SCMI_PROTOCOL
+	default m
+	help
+	Blah blah
+
+	Blah blah
+
 config ARM_SCPI_PROTOCOL
 	tristate "ARM System Control and Power Interface (SCPI) Message Protocol"
 	depends on ARM || ARM64 || COMPILE_TEST

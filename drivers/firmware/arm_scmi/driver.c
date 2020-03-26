@@ -773,7 +773,7 @@ static struct scmi_prot_devnames devnames[] = {
 	{ SCMI_PROTOCOL_POWER,  { "genpd" },},
 	{ SCMI_PROTOCOL_PERF,   { "cpufreq" },},
 	{ SCMI_PROTOCOL_CLOCK,  { "clocks" },},
-	{ SCMI_PROTOCOL_SENSOR, { "hwmon" },},
+	{ SCMI_PROTOCOL_SENSOR, { "hwmon", "iiodev" },},
 	{ SCMI_PROTOCOL_RESET,  { "reset" },},
 };
 
