@@ -56,14 +56,14 @@ static atomic_t transfer_last_id;
 /**
  * struct scmi_xfers_info - Structure to manage transfer information
  *
- * @xfer_block: Preallocated Message array
+ * @xfer_block: Preallocated Message pointers array
  * @xfer_alloc_table: Bitmap table for allocated messages.
  *	Index of this bitmap table is also used for message
  *	sequence identifier.
  * @xfer_lock: Protection for message allocation
  */
 struct scmi_xfers_info {
-	struct scmi_xfer *xfer_block;
+	struct scmi_xfer **xfer_block;
 	unsigned long *xfer_alloc_table;
 	spinlock_t xfer_lock;
 };
@@ -172,7 +172,7 @@ static struct scmi_xfer *scmi_xfer_get(const struct scmi_handle *handle,
 
 	xfer_id = bit_pos;
 
-	xfer = &minfo->xfer_block[xfer_id];
+	xfer = minfo->xfer_block[xfer_id];
 	xfer->hdr.seq = xfer_id;
 	reinit_completion(&xfer->done);
 	xfer->transfer_id = atomic_inc_return(&transfer_last_id);
@@ -270,7 +270,7 @@ static void scmi_handle_response(struct scmi_chan_info *cinfo,
 		return;
 	}
 
-	xfer = &minfo->xfer_block[xfer_id];
+	xfer = minfo->xfer_block[xfer_id];
 
 	scmi_handle_response_direct(cinfo, xfer, msg_type);
 }
@@ -612,10 +612,8 @@ static int __scmi_xfer_info_init(struct scmi_info *sinfo,
 		return -EINVAL;
 	}
 
-	info->xfer_block = devm_kcalloc(dev, desc->max_msg,
-					sizeof(*info->xfer_block) +
-						sinfo->desc->msg_extra_size,
-					GFP_KERNEL);
+	info->xfer_block = devm_kzalloc(dev, desc->max_msg *
+					sizeof(struct scmi_xfer *), GFP_KERNEL);
 	if (!info->xfer_block)
 		return -ENOMEM;
 
@@ -624,15 +622,23 @@ static int __scmi_xfer_info_init(struct scmi_info *sinfo,
 	if (!info->xfer_alloc_table)
 		return -ENOMEM;
 
-	/* Pre-initialize the buffer pointer to pre-allocated buffers */
-	for (i = 0, xfer = info->xfer_block; i < desc->max_msg; i++, xfer++) {
-		xfer->rx.buf = devm_kcalloc(dev, sizeof(u8), desc->max_msg_size,
-					    GFP_KERNEL);
-		if (!xfer->rx.buf)
+	for (i = 0; i < desc->max_msg; i++) {
+		/*
+		 * xfer->extra_data points to data block, which consists of
+		 * transport specific data and headers, followed by transport
+		 *  block itself.
+		 */
+		xfer = devm_kzalloc(dev, sizeof(struct scmi_xfer) +
+				    desc->msg_extra_size + desc->max_msg_size,
+				    GFP_KERNEL);
+		if (!xfer)
 			return -ENOMEM;
 
-		xfer->tx.buf = xfer->rx.buf;
+		xfer->tx.buf = xfer->extra_data + desc->msg_tx_offset;
+		xfer->rx.buf = xfer->extra_data;
+
 		init_completion(&xfer->done);
+		info->xfer_block[i] = xfer;
 	}
 
 	spin_lock_init(&info->xfer_lock);

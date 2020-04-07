@@ -219,6 +219,7 @@ struct scmi_transport_ops {
  *	simultaneously in the system
  * @max_msg_size: Maximum size of data per message that can be handled.
  * @msg_extra_size: Size of the message transport-specific private data.
+ * @msg_tx_offset:  Offset of scmi_xfer.tx.buf in scmi_xfer.extra_data.
  */
 struct scmi_desc {
 	struct scmi_transport_ops *ops;
@@ -226,6 +227,7 @@ struct scmi_desc {
 	int max_msg;
 	int max_msg_size;
 	unsigned int msg_extra_size;
+	unsigned int msg_tx_offset;
 };
 
 extern const struct scmi_desc scmi_mailbox_desc;

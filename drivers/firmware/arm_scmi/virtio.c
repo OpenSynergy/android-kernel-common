@@ -22,9 +22,11 @@ struct scmi_vio_channel {
 };
 
 struct scmi_vio_msg {
-	struct virtio_scmi_request request;
-	struct virtio_scmi_response response;
-	bool completed;
+	uint32_t completed;
+	union {
+		struct virtio_scmi_request request;
+		struct virtio_scmi_response response;
+	};
 };
 
 static void scmi_vio_complete_cb(struct virtqueue *vqueue)
@@ -42,11 +44,24 @@ static void scmi_vio_complete_cb(struct virtqueue *vqueue)
 
 		while ((msg = virtqueue_get_buf(vqueue, &length))) {
 			struct scmi_xfer *xfer = msg_to_scmi_xfer(msg);
+			u8 msg_type = MSG_XTRACT_TYPE(msg->response.hdr);
 
 			msg->completed = true;
 
 			if (xfer->hdr.poll_completion)
 				continue;
+
+			switch (msg_type) {
+			case MSG_TYPE_COMMAND:
+				xfer->rx.buf = xfer->extra_data +
+					sizeof(uint32_t) +
+					sizeof(struct virtio_scmi_response);
+				break;
+			default:
+				WARN_ONCE(1, "received unknown msg_type:%d\n",
+					  msg_type);
+				continue;
+			}
 
 			scmi_rx_callback(vioch->cinfo, msg->response.hdr, xfer);
 		}
@@ -127,21 +142,19 @@ static int virtio_chan_free(int id, void *p, void *data)
 static void scmi_vio_send(struct scmi_vio_channel *vioch,
 			  struct scmi_vio_msg *msg)
 {
-	struct scatterlist sg_out[2];
-	struct scatterlist sg_in[2];
-	struct scatterlist *sgs[2] = {sg_out, sg_in};
+	struct scatterlist sg_out;
+	struct scatterlist sg_in;
+	struct scatterlist *sgs[2] = {&sg_out, &sg_in};
 	struct scmi_xfer *xfer = msg_to_scmi_xfer(msg);
 	unsigned long iflags;
 	bool notify = false;
 
 	msg->completed = false;
 
-	sg_init_table(sg_out, 2);
-	sg_set_buf(&sg_out[0], &msg->request, sizeof(msg->request));
-	sg_set_buf(&sg_out[1], xfer->tx.buf, xfer->tx.len);
-	sg_init_table(sg_in, 2);
-	sg_set_buf(&sg_in[0], &msg->response, sizeof(msg->response));
-	sg_set_buf(&sg_in[1], xfer->rx.buf, xfer->rx.len);
+	sg_init_one(&sg_out, &msg->request,
+		    sizeof(msg->request) + xfer->tx.len);
+	sg_init_one(&sg_in, &msg->response,
+		    sizeof(msg->response) + xfer->rx.len);
 
 	spin_lock_irqsave(&vioch->lock, iflags);
 	if (!virtqueue_add_sgs(vioch->vqueue, sgs, 1, 1, msg, GFP_ATOMIC))
@@ -212,11 +225,12 @@ static struct scmi_transport_ops scmi_virtio_ops = {
 const struct scmi_desc scmi_mailbox_desc = {
 	.ops = &scmi_virtio_ops,
 	.max_rx_timeout_ms = 30, /* We may increase this if required */
-	.max_msg = 4,  /* VirtIO SCMI msg consumes 4 virtual queue descriptors,
-			* So, maximum # of SCMI messages is 1/4 of the vqueue
+	.max_msg = 8,  /* VirtIO SCMI msg consumes 2 virtual queue descriptors,
+			* So, maximum # of SCMI messages is 1/2 of the vqueue
 			* throughput capability.
 			* Our SCMI virtio-device has ring size = 16
 			*/
 	.max_msg_size = 128,
 	.msg_extra_size = sizeof(struct scmi_vio_msg),
+	.msg_tx_offset = sizeof(uint32_t) + sizeof(struct virtio_scmi_request),
 };
