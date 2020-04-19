@@ -151,41 +151,6 @@ static int scmi_iiodev_probe(struct scmi_device *sdev)
 		pr_err("Error registering notifier for evt:%d", 0x1);
 
 	/*
-	 * Register for TRIP POINT event
-	 *
-	 * NOTE that you MUST NOT explicitly enable the specific notification
-	 * with .trip_point_config() method....it will be taken care
-	 * by the SCMI notification core
-	 * This also means that if platform does NOT support the specific
-	 * event/sensor_id pair and returns an error on the core inner
-	 * notification enable request, register_event_notifier() will fail
-	 * and return error too.
-	 */
-	ret = handle->notify_ops->register_event_notifier(handle,
-							SCMI_PROTOCOL_SENSOR,
-							SENSOR_TRIP_POINT_EVENT,
-							&sensor_id,
-							&sensor_trip_nb);
-	/*
-	 * In order to get a TRIP POINT EVENT you must configure
-	 * also some TRIP POINT for that sensor...doing it after a notifier
-	 * has been registered ensure you don not loose events.
-	 */
-	if (!ret) {
-		u8 trip_id = 3;
-
-		ret = handle->sensor_ops->trip_point_config(handle, sensor_id,
-							    trip_id,
-							    0xcafecafe);
-		if (ret)
-			pr_err("%s():%d UNSUPPORTED STILL...\n",
-			       __func__, __LINE__);
-			//return -EINVAL;
-	} else {
-		pr_err("Error registering notifier for evt:%d", 0x0);
-	}
-
-	/*
 	 * As an additional remark about registering notifiers note that
 	 * you can also register you notifier for a specific event BUT
 	 * at the same time not specifying a specific sensor (leaving above
