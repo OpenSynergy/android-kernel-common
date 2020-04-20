@@ -131,6 +131,7 @@ struct scmi_msg {
  *	buffer for the rx path as we use for the tx path.
  * @done: command message transmit completion event
  * @async_done: pointer to delayed response message received event completion
+ * @extra_data: Transport-specific private data.
  */
 struct scmi_xfer {
 	int transfer_id;
@@ -139,7 +140,14 @@ struct scmi_xfer {
 	struct scmi_msg rx;
 	struct completion done;
 	struct completion *async_done;
+	u8 extra_data[];
 };
+
+#define SCMI_MSG_EXTRA(_msg_) ((void *)(_msg_)->extra_data)
+
+#define msg_to_scmi_xfer(_msg_) \
+	container_of((void *) _msg_, struct scmi_xfer, extra_data)
+
 
 void scmi_xfer_put(const struct scmi_handle *h, struct scmi_xfer *xfer);
 int scmi_do_xfer(const struct scmi_handle *h, struct scmi_xfer *xfer);
@@ -210,12 +218,14 @@ struct scmi_transport_ops {
  * @max_msg: Maximum number of messages that can be pending
  *	simultaneously in the system
  * @max_msg_size: Maximum size of data per message that can be handled.
+ * @msg_extra_size: Size of the message transport-specific private data.
  */
 struct scmi_desc {
 	struct scmi_transport_ops *ops;
 	int max_rx_timeout_ms;
 	int max_msg;
 	int max_msg_size;
+	unsigned int msg_extra_size;
 };
 
 extern const struct scmi_desc scmi_mailbox_desc;

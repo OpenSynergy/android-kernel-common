@@ -600,7 +600,9 @@ static int __scmi_xfer_info_init(struct scmi_info *sinfo,
 	}
 
 	info->xfer_block = devm_kcalloc(dev, desc->max_msg,
-					sizeof(*info->xfer_block), GFP_KERNEL);
+					sizeof(*info->xfer_block) +
+						sinfo->desc->msg_extra_size,
+					GFP_KERNEL);
 	if (!info->xfer_block)
 		return -ENOMEM;
 
