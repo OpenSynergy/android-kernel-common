@@ -236,6 +236,26 @@ static void scmi_handle_notification(struct scmi_chan_info *cinfo, u32 msg_hdr)
 	info->desc->ops->clear_notification(cinfo);
 }
 
+static void scmi_handle_response_direct(struct scmi_chan_info *cinfo,
+					struct scmi_xfer *xfer, u8 msg_type)
+{
+	struct device *dev = cinfo->dev;
+	struct scmi_info *info = handle_to_scmi_info(cinfo->handle);
+
+	scmi_dump_header_dbg(dev, &xfer->hdr);
+
+	info->desc->ops->fetch_response(cinfo, xfer);
+
+	trace_scmi_rx_done(xfer->transfer_id, xfer->hdr.id,
+			   xfer->hdr.protocol_id, xfer->hdr.seq,
+			   msg_type);
+
+	if (msg_type == MSG_TYPE_DELAYED_RESP)
+		complete(xfer->async_done);
+	else
+		complete(&xfer->done);
+}
+
 static void scmi_handle_response(struct scmi_chan_info *cinfo,
 				 u16 xfer_id, u8 msg_type)
 {
@@ -252,18 +272,7 @@ static void scmi_handle_response(struct scmi_chan_info *cinfo,
 
 	xfer = &minfo->xfer_block[xfer_id];
 
-	scmi_dump_header_dbg(dev, &xfer->hdr);
-
-	info->desc->ops->fetch_response(cinfo, xfer);
-
-	trace_scmi_rx_done(xfer->transfer_id, xfer->hdr.id,
-			   xfer->hdr.protocol_id, xfer->hdr.seq,
-			   msg_type);
-
-	if (msg_type == MSG_TYPE_DELAYED_RESP)
-		complete(xfer->async_done);
-	else
-		complete(&xfer->done);
+	scmi_handle_response_direct(cinfo, xfer, msg_type);
 }
 
 /**
@@ -278,7 +287,8 @@ static void scmi_handle_response(struct scmi_chan_info *cinfo,
  * NOTE: This function will be invoked in IRQ context, hence should be
  * as optimal as possible.
  */
-void scmi_rx_callback(struct scmi_chan_info *cinfo, u32 msg_hdr)
+void scmi_rx_callback(struct scmi_chan_info *cinfo, u32 msg_hdr,
+		      struct scmi_xfer *xfer)
 {
 	u16 xfer_id = MSG_XTRACT_TOKEN(msg_hdr);
 	u8 msg_type = MSG_XTRACT_TYPE(msg_hdr);
@@ -289,7 +299,10 @@ void scmi_rx_callback(struct scmi_chan_info *cinfo, u32 msg_hdr)
 		break;
 	case MSG_TYPE_COMMAND:
 	case MSG_TYPE_DELAYED_RESP:
-		scmi_handle_response(cinfo, xfer_id, msg_type);
+		if (xfer)
+			scmi_handle_response_direct(cinfo, xfer, msg_type);
+		else
+			scmi_handle_response(cinfo, xfer_id, msg_type);
 		break;
 	default:
 		WARN_ONCE(1, "received unknown msg_type:%d\n", msg_type);

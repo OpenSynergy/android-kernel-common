@@ -230,7 +230,8 @@ struct scmi_desc {
 
 extern const struct scmi_desc scmi_mailbox_desc;
 
-void scmi_rx_callback(struct scmi_chan_info *cinfo, u32 msg_hdr);
+void scmi_rx_callback(struct scmi_chan_info *cinfo, u32 msg_hdr,
+		      struct scmi_xfer *xfer);
 void scmi_free_channel(struct scmi_chan_info *cinfo, struct idr *idr, int id);
 
 /* shmem related declarations */
