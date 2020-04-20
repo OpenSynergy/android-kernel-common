@@ -6,10 +6,32 @@
 
 menu "Firmware Drivers"
 
+config ARM_SCMI_MAILBOX_TRANSPORT
+	bool "Mailbox transport for SCMI message protocol"
+	depends on MAILBOX
+	default n
+	help
+	  This enables support for the SCMI message protocol MAILBOX
+	  transport.
+
+	  The other option for SCMI message protocol is
+	  ARM_SCMI_VIRTIO_TRANSPORT.
+
+config ARM_SCMI_VIRTIO_TRANSPORT
+	bool "VirtIO transport for SCMI message protocol"
+	depends on VIRTIO_MMIO && !ARM_SCMI_MAILBOX_TRANSPORT
+	default n
+	help
+	  This enables support for the SCMI message protocol VirtIO
+	  transport.
+
+	  The other option for SCMI message protocol is
+	  ARM_SCMI_MAILBOX_TRANSPORT.
+
 config ARM_SCMI_PROTOCOL
 	bool "ARM System Control and Management Interface (SCMI) Message Protocol"
 	depends on ARM || ARM64 || COMPILE_TEST
-	depends on MAILBOX
+	depends on ARM_SCMI_VIRTIO_TRANSPORT || ARM_SCMI_MAILBOX_TRANSPORT
 	help
 	  ARM System Control and Management Interface (SCMI) protocol is a
 	  set of operating system-independent software interfaces that are
@@ -43,7 +65,7 @@ config ARM_SCMI_POWER_DOMAIN
 config ARM_SCPI_PROTOCOL
 	tristate "ARM System Control and Power Interface (SCPI) Message Protocol"
 	depends on ARM || ARM64 || COMPILE_TEST
-	depends on MAILBOX
+	depends on ARM_SCMI_VIRTIO_TRANSPORT || ARM_SCMI_MAILBOX_TRANSPORT 
 	help
 	  System Control and Power Interface (SCPI) Message Protocol is
 	  defined for the purpose of communication between the Application
@@ -295,7 +317,7 @@ config TURRIS_MOX_RWTM
 	tristate "Turris Mox rWTM secure firmware driver"
 	depends on ARCH_MVEBU || COMPILE_TEST
 	depends on HAS_DMA && OF
-	depends on MAILBOX
+	depends on ARM_SCMI_VIRTIO_TRANSPORT || ARM_SCMI_MAILBOX_TRANSPORT 
 	select HW_RANDOM
 	select ARMADA_37XX_RWTM_MBOX
 	help
