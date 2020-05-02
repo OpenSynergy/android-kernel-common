@@ -9,13 +9,14 @@
 #include <linux/of.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
+#include <linux/module.h>
 #include <linux/virtio_config.h>
+#include <uapi/linux/virtio_ids.h>
 #include <uapi/linux/virtio_scmi.h>
 
 #include "common.h"
 
 struct scmi_vio_channel {
-	int id;
 	spinlock_t lock;
 	struct virtqueue *vqueue;
 	struct scmi_chan_info *cinfo;
@@ -75,32 +76,40 @@ static void scmi_vio_complete_cb(struct virtqueue *vqueue)
 
 static bool virtio_chan_available(struct device *dev, int idx)
 {
+	struct platform_device *pdev;
+	struct virtio_device *vdev;
 	struct device_node *vioch_node;
-
-	if (idx) /* RX queue is not supported yet */
-		return false;
+	struct scmi_vio_channel *vioch;
 
 	vioch_node = of_parse_phandle(dev->of_node, "virtio_transport", 0);
 	if (!vioch_node)
 		return false;
 
+	pdev = of_find_device_by_node(vioch_node);
 	of_node_put(vioch_node);
+	if (!pdev)
+		return false;
 
-	return true;
+	vdev = (struct virtio_device *)pdev->dev.driver_data;
+	if (!vdev)
+		return false;
+
+	vioch = vdev->priv;
+	if (!vioch)
+		return false;
+
+	/* Check the presensen of virtual queue */
+	return !!(vioch->vqueue);
 }
 
 static int virtio_chan_setup(struct scmi_chan_info *cinfo, struct device *dev,
-			      bool tx)
+			     bool tx)
 {
 	struct platform_device *pdev;
 	struct virtio_device *vdev;
 	struct scmi_vio_channel *vioch;
 	struct device_node *vioch_node;
 	int idx = tx ? 0 : 1;
-
-	vioch = devm_kzalloc(dev, sizeof(*vioch), GFP_KERNEL);
-	if (!vioch)
-		return -ENOMEM;
 
 	vioch_node = of_parse_phandle(cinfo->dev->of_node,
 				      "virtio_transport", 0);
@@ -115,20 +124,13 @@ static int virtio_chan_setup(struct scmi_chan_info *cinfo, struct device *dev,
 	if (!vdev)
 		return -1;
 
-	vioch->id = idx;
-	vioch->cinfo = cinfo;
-	spin_lock_init(&vioch->lock);
-	vioch->vqueue =
-		virtio_find_single_vq(vdev, scmi_vio_complete_cb, "vscmi");
-
-	if (!vioch->vqueue) {
-		dev_err(dev, "Failed to get vqueue for virtio device\n");
+	vioch = (struct scmi_vio_channel *)vdev->priv;
+	if (!vioch) {
+		dev_err(dev, "Virtio scmi driver not probed successfully.\n");
 		return -1;
 	}
-
-	vdev->priv = vioch;
-
 	cinfo->transport_info = vioch;
+	vioch->cinfo = cinfo;
 
 	return 0;
 }
@@ -237,3 +239,52 @@ const struct scmi_desc scmi_virtio_desc = {
 	.msg_extra_size = sizeof(struct scmi_vio_msg),
 	.msg_tx_offset = sizeof(uint32_t) + sizeof(struct virtio_scmi_request),
 };
+
+static int scmi_vio_probe(struct virtio_device *vdev)
+{
+	struct device *dev = &vdev->dev;
+	struct scmi_vio_channel *vioch;
+
+	vioch = devm_kzalloc(dev, sizeof(struct scmi_vio_channel), GFP_KERNEL);
+	if (!vioch)
+		return -ENOMEM;
+
+	vioch->vqueue = virtio_find_single_vq(vdev, scmi_vio_complete_cb,
+					      "vscmi");
+
+	if (!vioch->vqueue) {
+		dev_err(dev, "Failed to get VQ_TX.\n");
+		return -1;
+	}
+
+	vioch->vqueue->priv = vioch;
+	spin_lock_init(&vioch->lock);
+
+	vdev->priv = vioch;
+
+	virtio_device_ready(vdev);
+
+	return 0;
+}
+
+static const struct virtio_device_id id_table[] = {
+	{VIRTIO_ID_SCMI, VIRTIO_DEV_ANY_ID},
+	{0}
+};
+
+static struct virtio_driver virtio_scmi_driver = {
+	.driver.name = "scmi-virtio",
+	.driver.owner = THIS_MODULE,
+	.id_table = id_table,
+	.probe = scmi_vio_probe,
+};
+
+static int __init virtio_scmi_init(void)
+{
+	return register_virtio_driver(&virtio_scmi_driver);
+}
+
+subsys_initcall(virtio_scmi_init);
+
+MODULE_LICENSE("GPL");
+MODULE_DESCRIPTION("Virtio scmi device driver");
