@@ -921,7 +921,13 @@ ATTRIBUTE_GROUPS(versions);
 
 /* Each compatible listed below must have descriptor associated with it */
 static const struct of_device_id scmi_of_match[] = {
+#ifdef CONFIG_ARM_SCMI_MAILBOX_TRANSPORT
 	{ .compatible = "arm,scmi", .data = &scmi_mailbox_desc },
+#else
+#ifdef CONFIG_ARM_SCMI_VIRTIO_TRANSPORT
+	{ .compatible = "arm,scmi-virtio", .data = &scmi_virtio_desc },
+#endif
+#endif
 	{ /* Sentinel */ },
 };
 

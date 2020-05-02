@@ -75,11 +75,18 @@ static void scmi_vio_complete_cb(struct virtqueue *vqueue)
 
 static bool virtio_chan_available(struct device *dev, int idx)
 {
-	if (idx) /* Notifications not supported yet */
+	struct device_node *vioch_node;
+
+	if (idx) /* RX queue is not supported yet */
 		return false;
 
-	return !of_parse_phandle_with_args(
-		dev->of_node, "mboxes", "#virtio_scmi_channel_idx", idx, NULL);
+	vioch_node = of_parse_phandle(dev->of_node, "virtio_transport", 0);
+	if (!vioch_node)
+		return false;
+
+	of_node_put(vioch_node);
+
+	return true;
 }
 
 static int virtio_chan_setup(struct scmi_chan_info *cinfo, struct device *dev,
@@ -95,7 +102,8 @@ static int virtio_chan_setup(struct scmi_chan_info *cinfo, struct device *dev,
 	if (!vioch)
 		return -ENOMEM;
 
-	vioch_node = of_parse_phandle(cinfo->dev->of_node, "mboxes", idx);
+	vioch_node = of_parse_phandle(cinfo->dev->of_node,
+				      "virtio_transport", 0);
 	pdev = of_find_device_by_node(vioch_node);
 	of_node_put(vioch_node);
 	if (!pdev) {
@@ -217,7 +225,7 @@ static struct scmi_transport_ops scmi_virtio_ops = {
 	.poll_done = virtio_poll_done,
 };
 
-const struct scmi_desc scmi_mailbox_desc = {
+const struct scmi_desc scmi_virtio_desc = {
 	.ops = &scmi_virtio_ops,
 	.max_rx_timeout_ms = 30, /* We may increase this if required */
 	.max_msg = 8,  /* VirtIO SCMI msg consumes 2 virtual queue descriptors,

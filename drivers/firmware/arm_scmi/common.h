@@ -230,7 +230,13 @@ struct scmi_desc {
 	unsigned int msg_tx_offset;
 };
 
+#ifdef CONFIG_ARM_SCMI_MAILBOX_TRANSPORT
 extern const struct scmi_desc scmi_mailbox_desc;
+#else
+#ifdef CONFIG_ARM_SCMI_VIRTIO_TRANSPORT
+extern const struct scmi_desc scmi_virtio_desc;
+#endif
+#endif
 
 void scmi_rx_callback(struct scmi_chan_info *cinfo, u32 msg_hdr,
 		      struct scmi_xfer *xfer);
