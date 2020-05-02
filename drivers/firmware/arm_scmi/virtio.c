@@ -162,13 +162,8 @@ static int virtio_send_message(struct scmi_chan_info *cinfo,
 
 	hdr = pack_scmi_header(&xfer->hdr);
 
-	if (xfer->tx.buf) {
-		size_t size = xfer->tx.len +
-			sizeof(struct virtio_scmi_request);
+	if (xfer->tx.buf)
 		msg->request.hdr = cpu_to_virtio32(vdev, hdr);
-		msg->request.len = cpu_to_virtio32(vdev, size -
-						   sizeof(msg->request.len));
-	}
 
 	scmi_vio_send(vioch, msg);
 

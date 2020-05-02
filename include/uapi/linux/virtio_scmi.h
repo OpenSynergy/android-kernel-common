@@ -21,14 +21,12 @@
 #include <linux/virtio_types.h>
 
 struct virtio_scmi_response {
-	__virtio32 len;
 	__virtio32 hdr;
 	__virtio32 status;
 	u8 data[];
 };
 
 struct virtio_scmi_request {
-	__virtio32 len;
 	__virtio32 hdr;
 	u8 data[];
 };
