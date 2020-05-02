@@ -203,39 +203,6 @@ __scmi_xfer_put(struct scmi_xfers_info *minfo, struct scmi_xfer *xfer)
 	spin_unlock_irqrestore(&minfo->xfer_lock, flags);
 }
 
-static void scmi_handle_notification(struct scmi_chan_info *cinfo, u32 msg_hdr)
-{
-	u64 ts;
-	struct scmi_xfer *xfer;
-	struct device *dev = cinfo->dev;
-	struct scmi_info *info = handle_to_scmi_info(cinfo->handle);
-	struct scmi_xfers_info *minfo = &info->rx_minfo;
-
-	ts = ktime_get_boottime_ns();
-	xfer = scmi_xfer_get(cinfo->handle, minfo);
-	if (IS_ERR(xfer)) {
-		dev_err(dev, "failed to get free message slot (%ld)\n",
-			PTR_ERR(xfer));
-		info->desc->ops->clear_notification(cinfo);
-		return;
-	}
-
-	unpack_scmi_header(msg_hdr, &xfer->hdr);
-	scmi_dump_header_dbg(dev, &xfer->hdr);
-	info->desc->ops->fetch_notification(cinfo, info->desc->max_msg_size,
-					    xfer);
-	scmi_notify(cinfo->handle, xfer->hdr.protocol_id,
-		    xfer->hdr.id, xfer->rx.buf, xfer->rx.len, ts);
-
-	trace_scmi_rx_done(xfer->transfer_id, xfer->hdr.id,
-			   xfer->hdr.protocol_id, xfer->hdr.seq,
-			   MSG_TYPE_NOTIFICATION);
-
-	__scmi_xfer_put(minfo, xfer);
-
-	info->desc->ops->clear_notification(cinfo);
-}
-
 static void scmi_handle_response_direct(struct scmi_chan_info *cinfo,
 					struct scmi_xfer *xfer, u8 msg_type)
 {
@@ -275,6 +242,49 @@ static void scmi_handle_response(struct scmi_chan_info *cinfo,
 	scmi_handle_response_direct(cinfo, xfer, msg_type);
 }
 
+static void scmi_handle_notification_direct(struct scmi_chan_info *cinfo,
+					    struct scmi_xfer *xfer, u32 msg_hdr)
+{
+	u64 ts;
+	struct device *dev = cinfo->dev;
+
+	ts = ktime_get_boottime_ns();
+
+	unpack_scmi_header(msg_hdr, &xfer->hdr);
+	scmi_dump_header_dbg(dev, &xfer->hdr);
+	scmi_notify(cinfo->handle, xfer->hdr.protocol_id,
+		    xfer->hdr.id, xfer->rx.buf, xfer->rx.len, ts);
+
+	trace_scmi_rx_done(xfer->transfer_id, xfer->hdr.id,
+			   xfer->hdr.protocol_id, xfer->hdr.seq,
+			   MSG_TYPE_NOTIFICATION);
+}
+
+static void scmi_handle_notification(struct scmi_chan_info *cinfo, u32 msg_hdr)
+{
+	struct scmi_xfer *xfer;
+	struct device *dev = cinfo->dev;
+	struct scmi_info *info = handle_to_scmi_info(cinfo->handle);
+	struct scmi_xfers_info *minfo = &info->rx_minfo;
+
+	xfer = scmi_xfer_get(cinfo->handle, minfo);
+	if (IS_ERR(xfer)) {
+		dev_err(dev, "failed to get free message slot (%ld)\n",
+			PTR_ERR(xfer));
+		info->desc->ops->clear_notification(cinfo);
+		return;
+	}
+
+	info->desc->ops->fetch_notification(cinfo, info->desc->max_msg_size,
+					    xfer);
+
+	scmi_handle_notification_direct(cinfo, xfer, msg_hdr);
+
+	__scmi_xfer_put(minfo, xfer);
+
+	info->desc->ops->clear_notification(cinfo);
+}
+
 /**
  * scmi_rx_callback() - callback for receiving messages
  *
@@ -295,7 +305,10 @@ void scmi_rx_callback(struct scmi_chan_info *cinfo, u32 msg_hdr,
 
 	switch (msg_type) {
 	case MSG_TYPE_NOTIFICATION:
-		scmi_handle_notification(cinfo, msg_hdr);
+		if (xfer)
+			scmi_handle_notification_direct(cinfo, xfer, msg_hdr);
+		else
+			scmi_handle_notification(cinfo, msg_hdr);
 		break;
 	case MSG_TYPE_COMMAND:
 	case MSG_TYPE_DELAYED_RESP:
@@ -648,10 +661,23 @@ static int __scmi_xfer_info_init(struct scmi_info *sinfo,
 
 static int scmi_xfer_info_init(struct scmi_info *sinfo)
 {
-	int ret = __scmi_xfer_info_init(sinfo, &sinfo->tx_minfo);
+	int i;
+	int ret;
+	struct scmi_chan_info *cinfo;
 
-	if (!ret && idr_find(&sinfo->rx_idr, SCMI_PROTOCOL_BASE))
+	ret = __scmi_xfer_info_init(sinfo, &sinfo->tx_minfo);
+
+	cinfo = idr_find(&sinfo->rx_idr, SCMI_PROTOCOL_BASE);
+
+	if (!ret && cinfo) {
 		ret = __scmi_xfer_info_init(sinfo, &sinfo->rx_minfo);
+		if (ret || !sinfo->desc->ops->put_rx_xfer)
+			return ret;
+
+		for (i = 0; i < sinfo->desc->max_msg; i++)
+			sinfo->desc->ops->put_rx_xfer(
+				cinfo, sinfo->rx_minfo.xfer_block[i]);
+	}
 
 	return ret;
 }

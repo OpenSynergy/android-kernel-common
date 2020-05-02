@@ -20,6 +20,25 @@
 
 #include <linux/virtio_types.h>
 
+#define VQ_TX 0
+#define VQ_RX 1
+#define VQ_MAX_CNT 2
+
+/*
+ * For virtio scmi transport message size is not limited by mailbox shmem size,
+ * and can be bigger than still hardcoded in mainline value of 128, so this
+ * value can be changed.
+ */
+#define VIRTIO_SCMI_MAX_MSG_SIZE 128
+
+/*
+ * Feature bits.
+ *
+ * VIRTIO_SCMI_F_P2A_CHANNELS - Device implements some SCMI, notifications,
+ *                              or delayed responses.
+ */
+#define VIRTIO_SCMI_F_P2A_CHANNELS 0
+
 struct virtio_scmi_response {
 	__virtio32 hdr;
 	__virtio32 status;
@@ -31,4 +50,8 @@ struct virtio_scmi_request {
 	u8 data[];
 };
 
+struct virtio_scmi_notification {
+	__virtio32 hdr;
+	u8 data[];
+};
 #endif /* VIRTIO_SCMI_IF_H */

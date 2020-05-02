@@ -20,6 +20,7 @@ struct scmi_vio_channel {
 	spinlock_t lock;
 	struct virtqueue *vqueue;
 	struct scmi_chan_info *cinfo;
+	bool is_rx;
 };
 
 struct scmi_vio_msg {
@@ -27,12 +28,28 @@ struct scmi_vio_msg {
 	union {
 		struct virtio_scmi_request request;
 		struct virtio_scmi_response response;
+		struct virtio_scmi_notification notification;
 	};
 };
 
+static void scmi_vio_populate_vq_rx(struct scmi_vio_channel *vioch,
+				    struct scmi_vio_msg *msg)
+{
+	struct scatterlist sg_in;
+	struct scmi_xfer *xfer = msg_to_scmi_xfer(msg);
+
+	msg->completed = false;
+
+	sg_init_one(&sg_in, &msg->notification,
+		    sizeof(msg->notification) + xfer->rx.len);
+
+	if (!virtqueue_add_inbuf(vioch->vqueue, &sg_in, 1, msg, GFP_ATOMIC))
+		virtqueue_kick(vioch->vqueue);
+}
+
 static void scmi_vio_complete_cb(struct virtqueue *vqueue)
 {
-	struct scmi_vio_channel *vioch = vqueue->vdev->priv;
+	struct scmi_vio_channel *vioch = vqueue->priv;
 	unsigned long iflags;
 	unsigned int length;
 
@@ -58,13 +75,22 @@ static void scmi_vio_complete_cb(struct virtqueue *vqueue)
 					sizeof(uint32_t) +
 					sizeof(struct virtio_scmi_response);
 				break;
+			case MSG_TYPE_NOTIFICATION:
+				xfer->rx.buf = xfer->extra_data +
+					sizeof(uint32_t) +
+					sizeof(struct virtio_scmi_notification);
+				break;
 			default:
 				WARN_ONCE(1, "received unknown msg_type:%d\n",
 					  msg_type);
 				continue;
 			}
 
-			scmi_rx_callback(vioch->cinfo, msg->response.hdr, xfer);
+			scmi_rx_callback(vioch->cinfo,
+					 vioch->is_rx ? msg->notification.hdr :
+						msg->response.hdr, xfer);
+			if (vioch->is_rx)
+				scmi_vio_populate_vq_rx(vioch, msg);
 		}
 
 		if (unlikely(virtqueue_is_broken(vqueue)))
@@ -74,12 +100,19 @@ static void scmi_vio_complete_cb(struct virtqueue *vqueue)
 	spin_unlock_irqrestore(&vioch->lock, iflags);
 }
 
+static vq_callback_t *scmi_vio_complete_callbacks[] = {
+	scmi_vio_complete_cb,
+	scmi_vio_complete_cb
+};
+
+static const char * const scmi_vio_vqueue_names[] = { "vscmi-tx", "vscmi-rx" };
+
 static bool virtio_chan_available(struct device *dev, int idx)
 {
 	struct platform_device *pdev;
 	struct virtio_device *vdev;
 	struct device_node *vioch_node;
-	struct scmi_vio_channel *vioch;
+	struct scmi_vio_channel **vioch;
 
 	vioch_node = of_parse_phandle(dev->of_node, "virtio_transport", 0);
 	if (!vioch_node)
@@ -98,8 +131,7 @@ static bool virtio_chan_available(struct device *dev, int idx)
 	if (!vioch)
 		return false;
 
-	/* Check the presensen of virtual queue */
-	return !!(vioch->vqueue);
+	return !!(vioch[idx] && vioch[idx]->vqueue);
 }
 
 static int virtio_chan_setup(struct scmi_chan_info *cinfo, struct device *dev,
@@ -107,12 +139,13 @@ static int virtio_chan_setup(struct scmi_chan_info *cinfo, struct device *dev,
 {
 	struct platform_device *pdev;
 	struct virtio_device *vdev;
-	struct scmi_vio_channel *vioch;
 	struct device_node *vioch_node;
-	int idx = tx ? 0 : 1;
+	struct scmi_vio_channel **vioch;
+	int vioch_index = tx ? VQ_TX : VQ_RX;
 
 	vioch_node = of_parse_phandle(cinfo->dev->of_node,
 				      "virtio_transport", 0);
+
 	pdev = of_find_device_by_node(vioch_node);
 	of_node_put(vioch_node);
 	if (!pdev) {
@@ -124,13 +157,13 @@ static int virtio_chan_setup(struct scmi_chan_info *cinfo, struct device *dev,
 	if (!vdev)
 		return -1;
 
-	vioch = (struct scmi_vio_channel *)vdev->priv;
+	vioch = (struct scmi_vio_channel **)vdev->priv;
 	if (!vioch) {
 		dev_err(dev, "Virtio scmi driver not probed successfully.\n");
 		return -1;
 	}
-	cinfo->transport_info = vioch;
-	vioch->cinfo = cinfo;
+	cinfo->transport_info = vioch[vioch_index];
+	vioch[vioch_index]->cinfo = cinfo;
 
 	return 0;
 }
@@ -149,15 +182,15 @@ static int virtio_chan_free(int id, void *p, void *data)
 	return 0;
 }
 
-static void scmi_vio_send(struct scmi_vio_channel *vioch,
-			  struct scmi_vio_msg *msg)
+static int scmi_vio_send(struct scmi_vio_channel *vioch,
+			 struct scmi_vio_msg *msg)
 {
 	struct scatterlist sg_out;
 	struct scatterlist sg_in;
 	struct scatterlist *sgs[2] = {&sg_out, &sg_in};
 	struct scmi_xfer *xfer = msg_to_scmi_xfer(msg);
 	unsigned long iflags;
-	bool notify = false;
+	int rc;
 
 	msg->completed = false;
 
@@ -167,12 +200,11 @@ static void scmi_vio_send(struct scmi_vio_channel *vioch,
 		    sizeof(msg->response) + xfer->rx.len);
 
 	spin_lock_irqsave(&vioch->lock, iflags);
-	if (!virtqueue_add_sgs(vioch->vqueue, sgs, 1, 1, msg, GFP_ATOMIC))
-		notify = virtqueue_kick_prepare(vioch->vqueue);
+	rc =  virtqueue_add_sgs(vioch->vqueue, sgs, 1, 1, msg, GFP_ATOMIC);
+	virtqueue_kick(vioch->vqueue);
 	spin_unlock_irqrestore(&vioch->lock, iflags);
 
-	if (notify)
-		virtqueue_notify(vioch->vqueue);
+	return rc;
 }
 
 static int virtio_send_message(struct scmi_chan_info *cinfo,
@@ -188,9 +220,20 @@ static int virtio_send_message(struct scmi_chan_info *cinfo,
 	if (xfer->tx.buf)
 		msg->request.hdr = cpu_to_virtio32(vdev, hdr);
 
-	scmi_vio_send(vioch, msg);
+	return scmi_vio_send(vioch, msg);
+}
 
-	return 0;
+static void dummy_fetch_notification(struct scmi_chan_info *cinfo,
+				     size_t max_len, struct scmi_xfer *xfer)
+{
+	(void)cinfo;
+	(void)max_len;
+	(void)xfer;
+}
+
+static void dummy_clear_notification(struct scmi_chan_info *cinfo)
+{
+	(void)cinfo;
 }
 
 static void virtio_fetch_response(struct scmi_chan_info *cinfo,
@@ -218,13 +261,30 @@ virtio_poll_done(struct scmi_chan_info *cinfo, struct scmi_xfer *xfer)
 	return completed;
 }
 
+static void
+virtio_populate_rx(struct scmi_chan_info *cinfo, struct scmi_xfer *xfer)
+{
+	unsigned long iflags;
+	struct scmi_vio_channel *vioch = cinfo->transport_info;
+	struct scmi_vio_msg *msg = SCMI_MSG_EXTRA(xfer);
+
+	xfer->rx.len = VIRTIO_SCMI_MAX_MSG_SIZE;
+
+	spin_lock_irqsave(&vioch->lock, iflags);
+	scmi_vio_populate_vq_rx(vioch, msg);
+	spin_unlock_irqrestore(&vioch->lock, iflags);
+}
+
 static struct scmi_transport_ops scmi_virtio_ops = {
 	.chan_available = virtio_chan_available,
 	.chan_setup = virtio_chan_setup,
 	.chan_free = virtio_chan_free,
 	.send_message = virtio_send_message,
 	.fetch_response = virtio_fetch_response,
+	.fetch_notification = dummy_fetch_notification,
+	.clear_notification = dummy_clear_notification,
 	.poll_done = virtio_poll_done,
+	.put_rx_xfer = virtio_populate_rx,
 };
 
 const struct scmi_desc scmi_virtio_desc = {
@@ -235,7 +295,7 @@ const struct scmi_desc scmi_virtio_desc = {
 			* throughput capability.
 			* Our SCMI virtio-device has ring size = 16
 			*/
-	.max_msg_size = 128,
+	.max_msg_size = VIRTIO_SCMI_MAX_MSG_SIZE,
 	.msg_extra_size = sizeof(struct scmi_vio_msg),
 	.msg_tx_offset = sizeof(uint32_t) + sizeof(struct virtio_scmi_request),
 };
@@ -243,22 +303,53 @@ const struct scmi_desc scmi_virtio_desc = {
 static int scmi_vio_probe(struct virtio_device *vdev)
 {
 	struct device *dev = &vdev->dev;
-	struct scmi_vio_channel *vioch;
+	struct scmi_vio_channel **vioch;
 
-	vioch = devm_kzalloc(dev, sizeof(struct scmi_vio_channel), GFP_KERNEL);
+	vioch = devm_kcalloc(dev, VQ_MAX_CNT, sizeof(*vioch), GFP_KERNEL);
 	if (!vioch)
 		return -ENOMEM;
 
-	vioch->vqueue = virtio_find_single_vq(vdev, scmi_vio_complete_cb,
-					      "vscmi");
+	vioch[VQ_TX] = devm_kzalloc(dev, sizeof(struct scmi_vio_channel),
+				    GFP_KERNEL);
+	if (!vioch[VQ_TX])
+		return -ENOMEM;
 
-	if (!vioch->vqueue) {
-		dev_err(dev, "Failed to get VQ_TX.\n");
-		return -1;
+	if (virtio_has_feature(vdev, VIRTIO_SCMI_F_P2A_CHANNELS)) {
+		int i;
+		struct virtqueue *vqs[2];
+
+		vioch[VQ_RX] = devm_kzalloc(dev,
+					    sizeof(struct scmi_vio_channel),
+					    GFP_KERNEL);
+		if (!vioch[VQ_RX])
+			return -ENOMEM;
+		vioch[VQ_RX]->is_rx = true;
+
+		if (virtio_find_vqs(vdev, 2, vqs,
+				    scmi_vio_complete_callbacks,
+				    scmi_vio_vqueue_names, NULL)) {
+			dev_err(dev, "Failed to get vqs (VQ_TX, VQ_RX).\n");
+			return -1;
+		}
+
+		for (i = VQ_TX; i < VQ_MAX_CNT; i++) {
+			spin_lock_init(&vioch[i]->lock);
+			vioch[i]->vqueue = vqs[i];
+			vioch[i]->vqueue->priv = vioch[i];
+		}
+		dev_info(dev, "VQ_TX and VQ_RX are both found.\n");
+	} else {
+		if (virtio_find_vqs(vdev, 1, &vioch[VQ_TX]->vqueue,
+				    scmi_vio_complete_callbacks,
+				    scmi_vio_vqueue_names, NULL)) {
+			dev_err(dev, "Failed to get VQ_TX.\n");
+			return -1;
+		}
+
+		vioch[VQ_TX]->vqueue->priv = vioch[VQ_TX];
+		spin_lock_init(&vioch[VQ_TX]->lock);
+		dev_info(dev, "VQ_RX is not supported.\n");
 	}
-
-	vioch->vqueue->priv = vioch;
-	spin_lock_init(&vioch->lock);
 
 	vdev->priv = vioch;
 
@@ -266,6 +357,10 @@ static int scmi_vio_probe(struct virtio_device *vdev)
 
 	return 0;
 }
+
+static unsigned int features[] = {
+	VIRTIO_SCMI_F_P2A_CHANNELS,
+};
 
 static const struct virtio_device_id id_table[] = {
 	{VIRTIO_ID_SCMI, VIRTIO_DEV_ANY_ID},
@@ -275,6 +370,8 @@ static const struct virtio_device_id id_table[] = {
 static struct virtio_driver virtio_scmi_driver = {
 	.driver.name = "scmi-virtio",
 	.driver.owner = THIS_MODULE,
+	.feature_table = features,
+	.feature_table_size = ARRAY_SIZE(features),
 	.id_table = id_table,
 	.probe = scmi_vio_probe,
 };

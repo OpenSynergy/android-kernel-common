@@ -193,6 +193,10 @@ struct scmi_chan_info {
  * @fetch_notification: Callback to fetch notification
  * @clear_notification: Callback to clear a pending notification
  * @poll_done: Callback to poll transfer status
+ * @put_rx_xfer: Callback for rx channel xfer blocks management.
+ *		 It has no meaning for mailbox transport, but, in virtio,
+ *		 it is necessary to populate rx vqueue with free messages on
+ *		 startup.
  */
 struct scmi_transport_ops {
 	bool (*chan_available)(struct device *dev, int idx);
@@ -208,6 +212,8 @@ struct scmi_transport_ops {
 				   size_t max_len, struct scmi_xfer *xfer);
 	void (*clear_notification)(struct scmi_chan_info *cinfo);
 	bool (*poll_done)(struct scmi_chan_info *cinfo, struct scmi_xfer *xfer);
+	void (*put_rx_xfer)(struct scmi_chan_info *cinfo,
+			    struct scmi_xfer *xfer);
 };
 
 /**
