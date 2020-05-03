@@ -135,7 +135,7 @@ static bool virtio_chan_available(struct device *dev, int idx)
 }
 
 static int virtio_chan_setup(struct scmi_chan_info *cinfo, struct device *dev,
-			     bool tx)
+			     bool tx, int *max_msg)
 {
 	struct platform_device *pdev;
 	struct virtio_device *vdev;
@@ -164,6 +164,14 @@ static int virtio_chan_setup(struct scmi_chan_info *cinfo, struct device *dev,
 	}
 	cinfo->transport_info = vioch[vioch_index];
 	vioch[vioch_index]->cinfo = cinfo;
+
+	/*
+	 * VirtIO SCMI msg consumes 2 virtual queue descriptors for TX queue,
+	 * and 1 descriptor for RX queue.
+	 */
+	*max_msg = virtqueue_get_vring_size(vioch[vioch_index]->vqueue);
+	if (tx)
+		*max_msg /= 2;
 
 	return 0;
 }
@@ -290,11 +298,6 @@ static struct scmi_transport_ops scmi_virtio_ops = {
 const struct scmi_desc scmi_virtio_desc = {
 	.ops = &scmi_virtio_ops,
 	.max_rx_timeout_ms = 30, /* We may increase this if required */
-	.max_msg = 8,  /* VirtIO SCMI msg consumes 2 virtual queue descriptors,
-			* So, maximum # of SCMI messages is 1/2 of the vqueue
-			* throughput capability.
-			* Our SCMI virtio-device has ring size = 16
-			*/
 	.max_msg_size = VIRTIO_SCMI_MAX_MSG_SIZE,
 	.msg_extra_size = sizeof(struct scmi_vio_msg),
 	.msg_tx_offset = sizeof(uint32_t) + sizeof(struct virtio_scmi_request),

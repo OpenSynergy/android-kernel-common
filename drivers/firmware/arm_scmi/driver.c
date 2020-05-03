@@ -61,11 +61,13 @@ static atomic_t transfer_last_id;
  *	Index of this bitmap table is also used for message
  *	sequence identifier.
  * @xfer_lock: Protection for message allocation
+ * @max_msg: Length of xfer blocks array
  */
 struct scmi_xfers_info {
 	struct scmi_xfer **xfer_block;
 	unsigned long *xfer_alloc_table;
 	spinlock_t xfer_lock;
+	int max_msg;
 };
 
 /**
@@ -157,13 +159,11 @@ static struct scmi_xfer *scmi_xfer_get(const struct scmi_handle *handle,
 	u16 xfer_id;
 	struct scmi_xfer *xfer;
 	unsigned long flags, bit_pos;
-	struct scmi_info *info = handle_to_scmi_info(handle);
 
 	/* Keep the locked section as small as possible */
 	spin_lock_irqsave(&minfo->xfer_lock, flags);
-	bit_pos = find_first_zero_bit(minfo->xfer_alloc_table,
-				      info->desc->max_msg);
-	if (bit_pos == info->desc->max_msg) {
+	bit_pos = find_first_zero_bit(minfo->xfer_alloc_table, minfo->max_msg);
+	if (bit_pos == minfo->max_msg) {
 		spin_unlock_irqrestore(&minfo->xfer_lock, flags);
 		return ERR_PTR(-ENOMEM);
 	}
@@ -619,23 +619,23 @@ static int __scmi_xfer_info_init(struct scmi_info *sinfo,
 	const struct scmi_desc *desc = sinfo->desc;
 
 	/* Pre-allocated messages, no more than what hdr.seq can support */
-	if (WARN_ON(desc->max_msg >= MSG_TOKEN_MAX)) {
+	if (WARN_ON(info->max_msg >= MSG_TOKEN_MAX)) {
 		dev_err(dev, "Maximum message of %d exceeds supported %ld\n",
-			desc->max_msg, MSG_TOKEN_MAX);
+			info->max_msg, MSG_TOKEN_MAX);
 		return -EINVAL;
 	}
 
-	info->xfer_block = devm_kzalloc(dev, desc->max_msg *
+	info->xfer_block = devm_kzalloc(dev, info->max_msg *
 					sizeof(struct scmi_xfer *), GFP_KERNEL);
 	if (!info->xfer_block)
 		return -ENOMEM;
 
-	info->xfer_alloc_table = devm_kcalloc(dev, BITS_TO_LONGS(desc->max_msg),
+	info->xfer_alloc_table = devm_kcalloc(dev, BITS_TO_LONGS(info->max_msg),
 					      sizeof(long), GFP_KERNEL);
 	if (!info->xfer_alloc_table)
 		return -ENOMEM;
 
-	for (i = 0; i < desc->max_msg; i++) {
+	for (i = 0; i < info->max_msg; i++) {
 		/*
 		 * xfer->extra_data points to data block, which consists of
 		 * transport specific data and headers, followed by transport
@@ -674,7 +674,7 @@ static int scmi_xfer_info_init(struct scmi_info *sinfo)
 		if (ret || !sinfo->desc->ops->put_rx_xfer)
 			return ret;
 
-		for (i = 0; i < sinfo->desc->max_msg; i++)
+		for (i = 0; i < sinfo->rx_minfo.max_msg; i++)
 			sinfo->desc->ops->put_rx_xfer(
 				cinfo, sinfo->rx_minfo.xfer_block[i]);
 	}
@@ -688,10 +688,12 @@ static int scmi_chan_setup(struct scmi_info *info, struct device *dev,
 	int ret, idx;
 	struct scmi_chan_info *cinfo;
 	struct idr *idr;
+	struct scmi_xfers_info *minfo;
 
 	/* Transmit channel is first entry i.e. index 0 */
 	idx = tx ? 0 : 1;
 	idr = tx ? &info->tx_idr : &info->rx_idr;
+	minfo = tx ? &info->tx_minfo : &info->rx_minfo;
 
 	/* check if already allocated, used for multiple device per protocol */
 	cinfo = idr_find(idr, prot_id);
@@ -711,7 +713,8 @@ static int scmi_chan_setup(struct scmi_info *info, struct device *dev,
 
 	cinfo->dev = dev;
 
-	ret = info->desc->ops->chan_setup(cinfo, info->dev, tx);
+	ret = info->desc->ops->chan_setup(cinfo, info->dev, tx,
+					  &minfo->max_msg);
 	if (ret)
 		return ret;
 

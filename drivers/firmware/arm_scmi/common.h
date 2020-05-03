@@ -201,7 +201,7 @@ struct scmi_chan_info {
 struct scmi_transport_ops {
 	bool (*chan_available)(struct device *dev, int idx);
 	int (*chan_setup)(struct scmi_chan_info *cinfo, struct device *dev,
-			  bool tx);
+			  bool tx, int *max_msg);
 	int (*chan_free)(int id, void *p, void *data);
 	int (*send_message)(struct scmi_chan_info *cinfo,
 			    struct scmi_xfer *xfer);
@@ -221,8 +221,6 @@ struct scmi_transport_ops {
  *
  * @ops: Pointer to the transport specific ops structure
  * @max_rx_timeout_ms: Timeout for communication with SoC (in Milliseconds)
- * @max_msg: Maximum number of messages that can be pending
- *	simultaneously in the system
  * @max_msg_size: Maximum size of data per message that can be handled.
  * @msg_extra_size: Size of the message transport-specific private data.
  * @msg_tx_offset:  Offset of scmi_xfer.tx.buf in scmi_xfer.extra_data.
@@ -230,7 +228,6 @@ struct scmi_transport_ops {
 struct scmi_desc {
 	struct scmi_transport_ops *ops;
 	int max_rx_timeout_ms;
-	int max_msg;
 	int max_msg_size;
 	unsigned int msg_extra_size;
 	unsigned int msg_tx_offset;
