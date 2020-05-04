@@ -183,10 +183,6 @@ static int virtio_send_message(struct scmi_chan_info *cinfo,
 	return 0;
 }
 
-static void virtio_mark_txdone(struct scmi_chan_info *cinfo, int ret)
-{
-}
-
 static void virtio_fetch_response(struct scmi_chan_info *cinfo,
 				   struct scmi_xfer *xfer)
 {
@@ -217,7 +213,6 @@ static struct scmi_transport_ops scmi_virtio_ops = {
 	.chan_setup = virtio_chan_setup,
 	.chan_free = virtio_chan_free,
 	.send_message = virtio_send_message,
-	.mark_txdone = virtio_mark_txdone,
 	.fetch_response = virtio_fetch_response,
 	.poll_done = virtio_poll_done,
 };
