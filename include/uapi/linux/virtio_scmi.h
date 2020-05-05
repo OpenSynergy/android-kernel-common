@@ -54,4 +54,11 @@ struct virtio_scmi_notification {
 	__virtio32 hdr;
 	u8 data[];
 };
+
+struct virtio_scmi_delayed_resp {
+	__virtio32 hdr;
+	__virtio32 status;
+	u8 data[];
+};
+
 #endif /* VIRTIO_SCMI_IF_H */

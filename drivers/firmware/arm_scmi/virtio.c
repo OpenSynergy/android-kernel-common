@@ -29,6 +29,7 @@ struct scmi_vio_msg {
 		struct virtio_scmi_request request;
 		struct virtio_scmi_response response;
 		struct virtio_scmi_notification notification;
+		struct virtio_scmi_delayed_resp delayed_resp;
 	};
 };
 
@@ -63,6 +64,7 @@ static void scmi_vio_complete_cb(struct virtqueue *vqueue)
 		while ((msg = virtqueue_get_buf(vqueue, &length))) {
 			struct scmi_xfer *xfer = msg_to_scmi_xfer(msg);
 			u8 msg_type = MSG_XTRACT_TYPE(msg->response.hdr);
+			u32 msg_hdr;
 
 			msg->completed = true;
 
@@ -71,14 +73,22 @@ static void scmi_vio_complete_cb(struct virtqueue *vqueue)
 
 			switch (msg_type) {
 			case MSG_TYPE_COMMAND:
+				msg_hdr = msg->response.hdr;
 				xfer->rx.buf = xfer->extra_data +
 					sizeof(uint32_t) +
 					sizeof(struct virtio_scmi_response);
 				break;
 			case MSG_TYPE_NOTIFICATION:
+				msg_hdr = msg->notification.hdr;
 				xfer->rx.buf = xfer->extra_data +
 					sizeof(uint32_t) +
 					sizeof(struct virtio_scmi_notification);
+				break;
+			case MSG_TYPE_DELAYED_RESP:
+				msg_hdr = msg->delayed_resp.hdr;
+				xfer->rx.buf = xfer->extra_data +
+					sizeof(uint32_t) +
+					sizeof(struct virtio_scmi_delayed_resp);
 				break;
 			default:
 				WARN_ONCE(1, "received unknown msg_type:%d\n",
@@ -86,9 +96,7 @@ static void scmi_vio_complete_cb(struct virtqueue *vqueue)
 				continue;
 			}
 
-			scmi_rx_callback(vioch->cinfo,
-					 vioch->is_rx ? msg->notification.hdr :
-						msg->response.hdr, xfer);
+			scmi_rx_callback(vioch->cinfo, msg_hdr, xfer);
 			if (vioch->is_rx)
 				scmi_vio_populate_vq_rx(vioch, msg);
 		}
