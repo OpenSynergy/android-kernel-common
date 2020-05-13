@@ -192,8 +192,8 @@ struct scmi_sensor_info {
 #define SCMI_SENSOR_CFG_SET_UPDATE_SECS(x, v)	((x) | ((u32)(v) << 16))
 
 #define SCMI_SENSOR_CFG_GET_UPDATE_MULTI(x)	(((x) >> 11) & 0x1f)
-#define SCMI_SENSOR_CFG_SET_UPDATE_MULTI(x, v)	((x) | ((s16)(v) << 11))
-
+#define SCMI_SENSOR_CFG_SET_UPDATE_MULTI(x, v)				\
+		((x) | (((s16)(v) << 11) & GENMASK(15, 11)))
 #define SCMI_SENSOR_CFG_SET_AUTO_ROUND_UP(x)	((x) | BIT(10))
 #define SCMI_SENSOR_CFG_SET_ROUND_UP(x)		(((x) & ~BIT(10)) | BIT(9))
 #define SCMI_SENSOR_CFG_SET_ROUND_DOWN(x)	((x) & ~GENMASK(10, 9))
@@ -320,8 +320,6 @@ enum scmi_sensor_class {
  *
  * @count_get: get the count of sensors provided by SCMI
  * @info_get: get the information of the specified sensor
- * @trip_point_notify: control notifications on cross-over events for
- *	the trip-points
  * @trip_point_config: selects and configures a trip-point of interest
  * @reading_get: gets the current value of the sensor
  * @reading_get_timestamped: gets the current value and timestamp, when
@@ -331,16 +329,11 @@ enum scmi_sensor_class {
  *			     @count entry equals the sensor num_axis
  * @config_get: Get sensor current configuration
  * @config_set: Set sensor current configuration
- * @continuous_update_notify: Enable continuos update notifications for the
- *			     specified sensor
  */
 struct scmi_sensor_ops {
 	int (*count_get)(const struct scmi_handle *handle);
-
 	const struct scmi_sensor_info *(*info_get)
 		(const struct scmi_handle *handle, u32 sensor_id);
-	int (*trip_point_notify)(const struct scmi_handle *handle,
-				 u32 sensor_id, bool enable);
 	int (*trip_point_config)(const struct scmi_handle *handle,
 				 u32 sensor_id, u8 trip_id, u64 trip_value);
 	int (*reading_get)(const struct scmi_handle *handle, u32 sensor_id,
@@ -352,8 +345,6 @@ struct scmi_sensor_ops {
 			  u32 sensor_id, u32 *sensor_config);
 	int (*config_set)(const struct scmi_handle *handle,
 			  u32 sensor_id, u32 sensor_config);
-	int (*continuous_update_notify)(const struct scmi_handle *handle,
-				        u32 sensor_id, bool enable);
 };
 
 /**
@@ -538,14 +529,17 @@ int scmi_protocol_register(int protocol_id, scmi_prot_init_fn_t fn);
 void scmi_protocol_unregister(int protocol_id);
 
 /* SCMI Notification API - Custom Event Reports */
-struct scmi_power_state_changed_report {
-	u64 timestamp;
-	u32 agent_id;
-	u32 domain_id;
-	u32 power_state;
+enum scmi_notification_events {
+	SCMI_EVENT_POWER_STATE_CHANGED = 0x0,
+	SCMI_EVENT_PERFORMANCE_LIMITS_CHANGED = 0x0,
+	SCMI_EVENT_PERFORMANCE_LEVEL_CHANGED = 0x1,
+	SCMI_EVENT_SENSOR_TRIP_POINT_EVENT = 0x0,
+	SCMI_EVENT_SENSOR_UPDATE = 0x1,
+	SCMI_EVENT_RESET_ISSUED = 0x0,
+	SCMI_EVENT_BASE_ERROR_EVENT = 0x0,
 };
 
-struct scmi_power_state_change_requested_report {
+struct scmi_power_state_changed_report {
 	u64 timestamp;
 	u32 agent_id;
 	u32 domain_id;
@@ -584,6 +578,7 @@ struct scmi_sensor_update_report {
 
 struct scmi_reset_issued_report {
 	u64 timestamp;
+	u32 agent_id;
 	u32 domain_id;
 	u32 reset_state;
 };
@@ -593,7 +588,7 @@ struct scmi_base_error_report {
 	u32 agent_id;
 	bool fatal;
 	u16 cmd_count;
-	u64 reports[8192];
+	u64 reports[0];
 };
 
 #endif /* _LINUX_SCMI_PROTOCOL_H */

@@ -298,7 +298,7 @@ static struct scmi_transport_ops scmi_virtio_ops = {
 	.send_message = virtio_send_message,
 	.fetch_response = virtio_fetch_response,
 	.fetch_notification = dummy_fetch_notification,
-	.clear_notification = dummy_clear_notification,
+	.clear_channel = dummy_clear_notification,
 	.poll_done = virtio_poll_done,
 	.put_rx_xfer = virtio_populate_rx,
 };

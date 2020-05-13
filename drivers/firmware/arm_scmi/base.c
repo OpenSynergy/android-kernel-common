@@ -5,10 +5,13 @@
  * Copyright (C) 2018 ARM Ltd.
  */
 
+#include <linux/scmi_protocol.h>
+
 #include "common.h"
 #include "notify.h"
 
-#define SCMI_BASE_NUM_SOURCES	1
+#define SCMI_BASE_NUM_SOURCES		1
+#define SCMI_BASE_MAX_CMD_ERR_COUNT	1024
 
 enum scmi_base_protocol_cmd {
 	BASE_DISCOVER_VENDOR = 0x3,
@@ -20,10 +23,6 @@ enum scmi_base_protocol_cmd {
 	BASE_SET_DEVICE_PERMISSIONS = 0x9,
 	BASE_SET_PROTOCOL_PERMISSIONS = 0xa,
 	BASE_RESET_AGENT_CONFIGURATION = 0xb,
-};
-
-enum scmi_base_protocol_notify {
-	BASE_ERROR_EVENT = 0x0,
 };
 
 struct scmi_msg_resp_base_attributes {
@@ -42,7 +41,7 @@ struct scmi_base_error_notify_payld {
 	__le32 error_status;
 #define IS_FATAL_ERROR(x)	((x) & BIT(31))
 #define ERROR_CMD_COUNT(x)	FIELD_GET(GENMASK(9, 0), (x))
-	__le64 msg_reports[8192];
+	__le64 msg_reports[SCMI_BASE_MAX_CMD_ERR_COUNT];
 };
 
 /**
@@ -282,7 +281,7 @@ static void *scmi_base_fill_custom_report(const struct scmi_handle *handle,
 	void *rep = NULL;
 
 	switch (evt_id) {
-	case BASE_ERROR_EVENT:
+	case SCMI_EVENT_BASE_ERROR_EVENT:
 	{
 		int i;
 		const struct scmi_base_error_notify_payld *p = payld;
@@ -317,9 +316,10 @@ static void *scmi_base_fill_custom_report(const struct scmi_handle *handle,
 
 static const struct scmi_event base_events[] = {
 	{
-		.id = BASE_ERROR_EVENT,
-		.max_payld_sz = 8192,
-		.max_report_sz = sizeof(struct scmi_base_error_report),
+		.id = SCMI_EVENT_BASE_ERROR_EVENT,
+		.max_payld_sz = sizeof(struct scmi_base_error_notify_payld),
+		.max_report_sz = sizeof(struct scmi_base_error_report) +
+				  SCMI_BASE_MAX_CMD_ERR_COUNT * sizeof(u64),
 	},
 };
 

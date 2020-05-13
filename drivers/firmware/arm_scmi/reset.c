@@ -5,6 +5,8 @@
  * Copyright (C) 2019 ARM Ltd.
  */
 
+#include <linux/scmi_protocol.h>
+
 #include "common.h"
 #include "notify.h"
 
@@ -12,10 +14,6 @@ enum scmi_reset_protocol_cmd {
 	RESET_DOMAIN_ATTRIBUTES = 0x3,
 	RESET = 0x4,
 	RESET_NOTIFY = 0x5,
-};
-
-enum scmi_reset_protocol_notify {
-	RESET_ISSUED = 0x0,
 };
 
 #define NUM_RESET_DOMAIN_MASK	0xffff
@@ -46,6 +44,7 @@ struct scmi_msg_reset_notify {
 };
 
 struct scmi_reset_issued_notify_payld {
+	__le32 agent_id;
 	__le32 domain_id;
 	__le32 reset_state;
 };
@@ -244,7 +243,7 @@ static void *scmi_reset_fill_custom_report(const struct scmi_handle *handle,
 	void *rep = NULL;
 
 	switch (evt_id) {
-	case RESET_ISSUED:
+	case SCMI_EVENT_RESET_ISSUED:
 	{
 		const struct scmi_reset_issued_notify_payld *p = payld;
 		struct scmi_reset_issued_report *r = report;
@@ -253,6 +252,7 @@ static void *scmi_reset_fill_custom_report(const struct scmi_handle *handle,
 			break;
 
 		r->timestamp = timestamp;
+		r->agent_id = le32_to_cpu(p->agent_id);
 		r->domain_id = le32_to_cpu(p->domain_id);
 		r->reset_state = le32_to_cpu(p->reset_state);
 		*src_id = r->domain_id;
@@ -268,8 +268,8 @@ static void *scmi_reset_fill_custom_report(const struct scmi_handle *handle,
 
 static const struct scmi_event reset_events[] = {
 	{
-		.id = RESET_NOTIFY,
-		.max_payld_sz = 8,
+		.id = SCMI_EVENT_RESET_ISSUED,
+		.max_payld_sz = sizeof(struct scmi_reset_issued_notify_payld),
 		.max_report_sz = sizeof(struct scmi_reset_issued_report),
 	},
 };

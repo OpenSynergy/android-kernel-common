@@ -5,6 +5,8 @@
  * Copyright (C) 2018-2020 ARM Ltd.
  */
 
+#include <linux/scmi_protocol.h>
+
 #include "common.h"
 #include "notify.h"
 
@@ -20,11 +22,6 @@ enum scmi_sensor_protocol_cmd {
 	SENSOR_CONFIG_GET = 0x9,
 	SENSOR_CONFIG_SET = 0xA,
 	SENSOR_CONTINUOUS_UPDATE_NOTIFY = 0xB,
-};
-
-enum scmi_sensor_protocol_notify {
-	SENSOR_TRIP_POINT_EVENT = 0x0,
-	SENSOR_UPDATE = 0x1,
 };
 
 struct scmi_msg_resp_sensor_attributes {
@@ -490,7 +487,7 @@ static int scmi_sensor_description_get(const struct scmi_handle *handle,
 			 * relevant fw versions...assuming fw not buggy !
 			 */
 			s->num_axis = SUPPORTS_AXIS(attrh) ?
-					SENSOR_AXIS_NUMBER(attrh) : 1;
+					SENSOR_AXIS_NUMBER(attrh) : 0;
 			strlcpy(s->name, sdesc->name, SCMI_MAX_STR_SIZE);
 
 			if (s->extended_scalar_attrs) {
@@ -805,13 +802,11 @@ static int scmi_sensor_count_get(const struct scmi_handle *handle)
 static struct scmi_sensor_ops sensor_ops = {
 	.count_get = scmi_sensor_count_get,
 	.info_get = scmi_sensor_info_get,
-	.trip_point_notify = scmi_sensor_trip_point_notify,
 	.trip_point_config = scmi_sensor_trip_point_config,
 	.reading_get = scmi_sensor_reading_get,
 	.reading_get_timestamped = scmi_sensor_reading_get_timestamped,
 	.config_get = scmi_sensor_config_get,
 	.config_set = scmi_sensor_config_set,
-	.continuous_update_notify = scmi_sensor_continuous_update_notify,
 };
 
 static bool scmi_sensor_set_notify_enabled(const struct scmi_handle *handle,
@@ -820,10 +815,10 @@ static bool scmi_sensor_set_notify_enabled(const struct scmi_handle *handle,
 	int ret;
 
 	switch (evt_id) {
-	case SENSOR_TRIP_POINT_EVENT:
+	case SCMI_EVENT_SENSOR_TRIP_POINT_EVENT:
 		ret = scmi_sensor_trip_point_notify(handle, src_id, enable);
 		break;
-	case SENSOR_UPDATE:
+	case SCMI_EVENT_SENSOR_UPDATE:
 		ret = scmi_sensor_continuous_update_notify(handle, src_id,
 							   enable);
 		break;
@@ -847,7 +842,7 @@ static void *scmi_sensor_fill_custom_report(const struct scmi_handle *handle,
 	void *rep = NULL;
 
 	switch (evt_id) {
-	case SENSOR_TRIP_POINT_EVENT:
+	case SCMI_EVENT_SENSOR_TRIP_POINT_EVENT:
 	{
 		const struct scmi_sensor_trip_notify_payld *p = payld;
 		struct scmi_sensor_trip_point_report *r = report;
@@ -863,7 +858,7 @@ static void *scmi_sensor_fill_custom_report(const struct scmi_handle *handle,
 		rep = r;
 		break;
 	}
-	case SENSOR_UPDATE:
+	case SCMI_EVENT_SENSOR_UPDATE:
 	{
 		int i;
 		struct scmi_sensor_info *s;
@@ -901,13 +896,12 @@ static void *scmi_sensor_fill_custom_report(const struct scmi_handle *handle,
 
 static const struct scmi_event sensor_events[] = {
 	{
-		.id = SENSOR_TRIP_POINT_EVENT,
-		.max_payld_sz = 12,
-		.max_report_sz =
-			sizeof(struct scmi_sensor_trip_point_report),
+		.id = SCMI_EVENT_SENSOR_TRIP_POINT_EVENT,
+		.max_payld_sz = sizeof(struct scmi_sensor_trip_notify_payld),
+		.max_report_sz = sizeof(struct scmi_sensor_trip_point_report),
 	},
 	{
-		.id = SENSOR_UPDATE,
+		.id = SCMI_EVENT_SENSOR_UPDATE,
 		.max_payld_sz =
 			sizeof(struct scmi_sensor_update_notify_payld) +
 			 SCMI_MAX_NUM_SENSOR_AXIS *

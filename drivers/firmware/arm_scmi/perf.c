@@ -11,6 +11,7 @@
 #include <linux/io-64-nonatomic-hi-lo.h>
 #include <linux/platform_device.h>
 #include <linux/pm_opp.h>
+#include <linux/scmi_protocol.h>
 #include <linux/sort.h>
 
 #include "common.h"
@@ -26,11 +27,6 @@ enum scmi_performance_protocol_cmd {
 	PERF_NOTIFY_LIMITS = 0x9,
 	PERF_NOTIFY_LEVEL = 0xa,
 	PERF_DESCRIBE_FASTCHANNEL = 0xb,
-};
-
-enum scmi_performance_protocol_notify {
-	PERFORMANCE_LIMITS_CHANGED = 0x0,
-	PERFORMANCE_LEVEL_CHANGED = 0x1,
 };
 
 struct scmi_opp {
@@ -779,7 +775,7 @@ static void *scmi_perf_fill_custom_report(const struct scmi_handle *handle,
 	void *rep = NULL;
 
 	switch (evt_id) {
-	case PERFORMANCE_LIMITS_CHANGED:
+	case SCMI_EVENT_PERFORMANCE_LIMITS_CHANGED:
 	{
 		const struct scmi_perf_limits_notify_payld *p = payld;
 		struct scmi_perf_limits_report *r = report;
@@ -796,7 +792,7 @@ static void *scmi_perf_fill_custom_report(const struct scmi_handle *handle,
 		rep = r;
 		break;
 	}
-	case PERFORMANCE_LEVEL_CHANGED:
+	case SCMI_EVENT_PERFORMANCE_LEVEL_CHANGED:
 	{
 		const struct scmi_perf_level_notify_payld *p = payld;
 		struct scmi_perf_level_report *r = report;
@@ -821,13 +817,13 @@ static void *scmi_perf_fill_custom_report(const struct scmi_handle *handle,
 
 static const struct scmi_event perf_events[] = {
 	{
-		.id = PERFORMANCE_LIMITS_CHANGED,
-		.max_payld_sz = 16,
+		.id = SCMI_EVENT_PERFORMANCE_LIMITS_CHANGED,
+		.max_payld_sz = sizeof(struct scmi_perf_limits_notify_payld),
 		.max_report_sz = sizeof(struct scmi_perf_limits_report),
 	},
 	{
-		.id = PERFORMANCE_LEVEL_CHANGED,
-		.max_payld_sz = 12,
+		.id = SCMI_EVENT_PERFORMANCE_LEVEL_CHANGED,
+		.max_payld_sz = sizeof(struct scmi_perf_level_notify_payld),
 		.max_report_sz = sizeof(struct scmi_perf_level_report),
 	},
 };

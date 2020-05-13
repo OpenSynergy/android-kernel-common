@@ -5,6 +5,8 @@
  * Copyright (C) 2018 ARM Ltd.
  */
 
+#include <linux/scmi_protocol.h>
+
 #include "common.h"
 #include "notify.h"
 
@@ -13,12 +15,6 @@ enum scmi_power_protocol_cmd {
 	POWER_STATE_SET = 0x4,
 	POWER_STATE_GET = 0x5,
 	POWER_STATE_NOTIFY = 0x6,
-	POWER_STATE_CHANGE_REQUESTED_NOTIFY = 0x7,
-};
-
-enum scmi_power_protocol_notify {
-	POWER_STATE_CHANGED = 0x0,
-	POWER_STATE_CHANGE_REQUESTED = 0x1,
 };
 
 struct scmi_msg_resp_power_attributes {
@@ -68,11 +64,6 @@ struct scmi_power_info {
 	u64 stats_addr;
 	u32 stats_size;
 	struct power_dom_info *dom_info;
-};
-
-static enum scmi_power_protocol_cmd evt_2_cmd[] = {
-	POWER_STATE_NOTIFY,
-	POWER_STATE_CHANGE_REQUESTED_NOTIFY,
 };
 
 static int scmi_power_attributes_get(const struct scmi_handle *handle,
@@ -199,14 +190,14 @@ static struct scmi_power_ops power_ops = {
 };
 
 static int scmi_power_request_notify(const struct scmi_handle *handle,
-				     u32 domain, int message_id, bool enable)
+				     u32 domain, bool enable)
 {
 	int ret;
 	struct scmi_xfer *t;
 	struct scmi_power_state_notify *notify;
 
-	ret = scmi_xfer_get_init(handle, message_id, SCMI_PROTOCOL_POWER,
-				 sizeof(*notify), 0, &t);
+	ret = scmi_xfer_get_init(handle, POWER_STATE_NOTIFY,
+				 SCMI_PROTOCOL_POWER, sizeof(*notify), 0, &t);
 	if (ret)
 		return ret;
 
@@ -223,13 +214,9 @@ static int scmi_power_request_notify(const struct scmi_handle *handle,
 static bool scmi_power_set_notify_enabled(const struct scmi_handle *handle,
 					  u8 evt_id, u32 src_id, bool enable)
 {
-	int ret, cmd_id;
+	int ret;
 
-	cmd_id = MAP_EVT_TO_ENABLE_CMD(evt_id, evt_2_cmd);
-	if (cmd_id < 0)
-		return false;
-
-	ret = scmi_power_request_notify(handle, src_id, cmd_id, enable);
+	ret = scmi_power_request_notify(handle, src_id, enable);
 	if (ret)
 		pr_warn("SCMI Notifications - Proto:%X - FAIL_ENABLE - evt[%X] dom[%d] - ret:%d\n",
 				SCMI_PROTOCOL_POWER, evt_id, src_id, ret);
@@ -245,26 +232,10 @@ static void *scmi_power_fill_custom_report(const struct scmi_handle *handle,
 	void *rep = NULL;
 
 	switch (evt_id) {
-	case POWER_STATE_CHANGED:
+	case SCMI_EVENT_POWER_STATE_CHANGED:
 	{
 		const struct scmi_power_state_notify_payld *p = payld;
 		struct scmi_power_state_changed_report *r = report;
-
-		if (sizeof(*p) != payld_sz)
-			break;
-
-		r->timestamp = timestamp;
-		r->agent_id = le32_to_cpu(p->agent_id);
-		r->domain_id = le32_to_cpu(p->domain_id);
-		r->power_state = le32_to_cpu(p->power_state);
-		*src_id = r->domain_id;
-		rep = r;
-		break;
-	}
-	case POWER_STATE_CHANGE_REQUESTED:
-	{
-		const struct scmi_power_state_notify_payld *p = payld;
-		struct scmi_power_state_change_requested_report *r = report;
 
 		if (sizeof(*p) != payld_sz)
 			break;
@@ -286,16 +257,10 @@ static void *scmi_power_fill_custom_report(const struct scmi_handle *handle,
 
 static const struct scmi_event power_events[] = {
 	{
-		.id = POWER_STATE_CHANGED,
-		.max_payld_sz = 12,
+		.id = SCMI_EVENT_POWER_STATE_CHANGED,
+		.max_payld_sz = sizeof(struct scmi_power_state_notify_payld),
 		.max_report_sz =
 			sizeof(struct scmi_power_state_changed_report),
-	},
-	{
-		.id = POWER_STATE_CHANGE_REQUESTED,
-		.max_payld_sz = 12,
-		.max_report_sz =
-			sizeof(struct scmi_power_state_change_requested_report),
 	},
 };
 

@@ -72,7 +72,6 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
-#include <linux/atomic.h>
 #include <linux/bitfield.h>
 #include <linux/bug.h>
 #include <linux/compiler.h>
@@ -182,9 +181,6 @@ struct scmi_registered_protocol_events_desc;
  * core
  * @gid: GroupID used for devres
  * @handle: A reference to the platform instance
- * @initialized: A flag that indicates if the core resources have been allocated
- *		 and protocols are allowed to register their supported events
- * @enabled: A flag to indicate events can be enabled and start flowing
  * @init_work: A work item to perform final initializations of pending handlers
  * @notify_wq: A reference to the allocated Kernel cmwq
  * @pending_mtx: A mutex to protect @pending_events_handlers
@@ -200,8 +196,6 @@ struct scmi_registered_protocol_events_desc;
 struct scmi_notify_instance {
 	void						*gid;
 	struct scmi_handle				*handle;
-	atomic_t					initialized;
-	atomic_t					enabled;
 
 	struct work_struct				init_work;
 
@@ -554,12 +548,13 @@ int scmi_notify(const struct scmi_handle *handle, u8 proto_id, u8 evt_id,
 {
 	struct scmi_registered_event *r_evt;
 	struct scmi_event_header eh;
-	struct scmi_notify_instance *ni = handle->notify_priv;
+	struct scmi_notify_instance *ni;
 
-	/* Ensure atomic value is updated */
-	smp_mb__before_atomic();
-	if (unlikely(!atomic_read(&ni->enabled)))
+	/* Ensure notify_priv is updated */
+	smp_rmb();
+	if (unlikely(!handle->notify_priv))
 		return 0;
+	ni = handle->notify_priv;
 
 	r_evt = SCMI_GET_REVT(ni, proto_id, evt_id);
 	if (unlikely(!r_evt))
@@ -718,15 +713,16 @@ int scmi_register_protocol_events(const struct scmi_handle *handle,
 	int i;
 	size_t payld_sz = 0;
 	struct scmi_registered_protocol_events_desc *pd;
-	struct scmi_notify_instance *ni = handle->notify_priv;
+	struct scmi_notify_instance *ni;
 
 	if (!ops || !evt || proto_id >= SCMI_MAX_PROTO)
 		return -EINVAL;
 
-	/* Ensure atomic value is updated */
-	smp_mb__before_atomic();
-	if (unlikely(!ni || !atomic_read(&ni->initialized)))
-		return -EAGAIN;
+	/* Ensure notify_priv is updated */
+	smp_rmb();
+	if (unlikely(!handle->notify_priv))
+		return -ENOMEM;
+	ni = handle->notify_priv;
 
 	/* Attach to the notification main devres group */
 	if (!devres_open_group(ni->handle->dev, ni->gid, GFP_KERNEL))
@@ -1237,10 +1233,13 @@ static int scmi_register_notifier(const struct scmi_handle *handle,
 	int ret = 0;
 	u32 evt_key;
 	struct scmi_event_handler *hndl;
-	struct scmi_notify_instance *ni = handle->notify_priv;
+	struct scmi_notify_instance *ni;
 
-	if (unlikely(!ni || !atomic_read(&ni->initialized)))
-		return 0;
+	/* Ensure notify_priv is updated */
+	smp_rmb();
+	if (unlikely(!handle->notify_priv))
+		return -ENODEV;
+	ni = handle->notify_priv;
 
 	evt_key = MAKE_HASH_KEY(proto_id, evt_id,
 				src_id ? *src_id : SCMI_ALL_SRC_IDS);
@@ -1283,10 +1282,13 @@ static int scmi_unregister_notifier(const struct scmi_handle *handle,
 {
 	u32 evt_key;
 	struct scmi_event_handler *hndl;
-	struct scmi_notify_instance *ni = handle->notify_priv;
+	struct scmi_notify_instance *ni;
 
-	if (unlikely(!ni || !atomic_read(&ni->initialized)))
-		return 0;
+	/* Ensure notify_priv is updated */
+	smp_rmb();
+	if (unlikely(!handle->notify_priv))
+		return -ENODEV;
+	ni = handle->notify_priv;
 
 	evt_key = MAKE_HASH_KEY(proto_id, evt_id,
 				src_id ? *src_id : SCMI_ALL_SRC_IDS);
@@ -1374,7 +1376,7 @@ static struct scmi_notify_ops notify_ops = {
  * cause the whole SCMI Protocols stack to fail its initialization.
  *
  * SCMI Notification Initialization happens in 2 steps:
- * * initialization: basic common allocations (this function) -> @initialized
+ * * initialization: basic common allocations (this function)
  * * registration: protocols asynchronously come into life and registers their
  *		   own supported list of events with the core; this causes
  *		   further per-protocol allocations
@@ -1419,15 +1421,12 @@ int scmi_notification_init(struct scmi_handle *handle)
 
 	INIT_WORK(&ni->init_work, scmi_protocols_late_init);
 
-	handle->notify_priv = ni;
 	handle->notify_ops = &notify_ops;
+	handle->notify_priv = ni;
+	/* Ensure handle is up to date */
+	smp_wmb();
 
-	atomic_set(&ni->initialized, 1);
-	atomic_set(&ni->enabled, 1);
-	/* Ensure atomic values are updated */
-	smp_mb__after_atomic();
-
-	pr_info("SCMI Notifications Core Initialized.\n");
+	pr_info("SCMI Notifications Core Enabled.\n");
 
 	devres_close_group(handle->dev, ni->gid);
 
@@ -1445,14 +1444,17 @@ err:
  */
 void scmi_notification_exit(struct scmi_handle *handle)
 {
-	struct scmi_notify_instance *ni = handle->notify_priv;
+	struct scmi_notify_instance *ni;
 
-	if (unlikely(!ni || !atomic_read(&ni->initialized)))
+	/* Ensure notify_priv is updated */
+	smp_rmb();
+	if (unlikely(!handle->notify_priv))
 		return;
+	ni = handle->notify_priv;
 
-	atomic_set(&ni->enabled, 0);
-	/* Ensure atomic values are updated */
-	smp_mb__after_atomic();
+	handle->notify_priv = NULL;
+	/* Ensure handle is up to date */
+	smp_wmb();
 
 	/* Destroy while letting pending work complete */
 	destroy_workqueue(ni->notify_wq);

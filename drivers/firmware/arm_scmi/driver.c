@@ -217,10 +217,13 @@ static void scmi_handle_response_direct(struct scmi_chan_info *cinfo,
 			   xfer->hdr.protocol_id, xfer->hdr.seq,
 			   msg_type);
 
-	if (msg_type == MSG_TYPE_DELAYED_RESP)
+	if (msg_type == MSG_TYPE_DELAYED_RESP){
+		info->desc->ops->clear_channel(cinfo);
 		complete(xfer->async_done);
-	else
+	}
+	else{
 		complete(&xfer->done);
+	}
 }
 
 static void scmi_handle_response(struct scmi_chan_info *cinfo,
@@ -234,10 +237,26 @@ static void scmi_handle_response(struct scmi_chan_info *cinfo,
 	/* Are we even expecting this? */
 	if (!test_bit(xfer_id, minfo->xfer_alloc_table)) {
 		dev_err(dev, "message for %d is not expected!\n", xfer_id);
+		info->desc->ops->clear_channel(cinfo);
 		return;
 	}
 
 	xfer = minfo->xfer_block[xfer_id];
+	/*
+	 * Even if a response was indeed expected on this slot at this point,
+	 * a buggy platform could wrongly reply feeding us an unexpected
+	 * delayed response we're not prepared to handle: bail-out safely
+	 * blaming firmware.
+	 */
+	if (unlikely(msg_type == MSG_TYPE_DELAYED_RESP && !xfer->async_done)) {
+		dev_err(dev,
+			"Delayed Response for %d not expected! Buggy F/W ?\n",
+			xfer_id);
+		info->desc->ops->clear_channel(cinfo);
+		/* It was unexpected, so nobody will clear the xfer if not us */
+		__scmi_xfer_put(minfo, xfer);
+		return;
+	}
 
 	scmi_handle_response_direct(cinfo, xfer, msg_type);
 }
@@ -271,7 +290,7 @@ static void scmi_handle_notification(struct scmi_chan_info *cinfo, u32 msg_hdr)
 	if (IS_ERR(xfer)) {
 		dev_err(dev, "failed to get free message slot (%ld)\n",
 			PTR_ERR(xfer));
-		info->desc->ops->clear_notification(cinfo);
+		info->desc->ops->clear_channel(cinfo);
 		return;
 	}
 
@@ -282,7 +301,7 @@ static void scmi_handle_notification(struct scmi_chan_info *cinfo, u32 msg_hdr)
 
 	__scmi_xfer_put(minfo, xfer);
 
-	info->desc->ops->clear_notification(cinfo);
+	info->desc->ops->clear_channel(cinfo);
 }
 
 /**
