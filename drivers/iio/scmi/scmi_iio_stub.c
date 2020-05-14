@@ -20,10 +20,6 @@ static u64 accelval = 20;
 //Initial stub sensor value for Gyroscope
 static u64 gyroval = 300;
 
-enum { SENSOR_TRIP_POINT_EVENT = 0x0,
-       SENSOR_UPDATE = 0x1,
-};
-
 static int scmi_sensor_count_get(const struct scmi_handle *handle)
 {
 	return NUM_OF_SENSORS;
@@ -172,7 +168,7 @@ enum hrtimer_restart accel_timer_callback(struct hrtimer *timer_for_restart)
 		accel_sensor_report->readings[i].timestamp_high =
 			(currtime_ns & 0xFFFFFFFF00000000) >> 32;
 	}
-	blocking_notifier_call_chain(&accel_chain, SENSOR_UPDATE,
+	blocking_notifier_call_chain(&accel_chain, SCMI_EVENT_SENSOR_UPDATE,
 				     (void *)(accel_sensor_report));
 	hrtimer_forward(timer_for_restart, currtime, interval);
 	return HRTIMER_RESTART;
@@ -204,7 +200,7 @@ enum hrtimer_restart gyro_timer_callback(struct hrtimer *timer_for_restart)
 			(currtime_ns & 0xFFFFFFFF00000000) >> 32;
 	}
 
-	blocking_notifier_call_chain(&gyro_chain, SENSOR_UPDATE,
+	blocking_notifier_call_chain(&gyro_chain, SCMI_EVENT_SENSOR_UPDATE,
 				     (void *)(gyro_sensor_report));
 	hrtimer_forward(timer_for_restart, currtime, interval);
 	return HRTIMER_RESTART;

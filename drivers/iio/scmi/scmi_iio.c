@@ -26,8 +26,6 @@
 	(((x)&SCMI_SENSOR_UPDATE_INTERVAL_MULT_SIGN_MASK) ?                    \
 		 ((x) | SCMI_SENSOR_UPDATE_INTERVAL_MULT_SIGN_EXTEND_MASK) :   \
 		 (x))
-#define SCMI_SENSOR_CFG_SET_UPDATE_MULTI(x, v)                                 \
-	((x) | (((s16)(v) << 11) & GENMASK(15, 11)))
 
 #define USEC_MULT_POW_10 (const_ilog2(USEC_PER_SEC) / const_ilog2(10))
 #define NSEC_MULT_POW_10 (const_ilog2(NSEC_PER_SEC) / const_ilog2(10))
@@ -35,10 +33,6 @@
 
 //one additional channel for timestamp
 #define SCMI_IIO_EXTRA_CHANNELS 1
-
-enum { SENSOR_TRIP_POINT_EVENT = 0x0,
-       SENSOR_UPDATE = 0x1,
-};
 
 //TODO : (egranata,jbhayana) : Try to remove this global variable and move it to IIO private data
 static struct iio_dev **iio_dev_arr;
@@ -111,7 +105,7 @@ static int scmi_iio_is_scalar_sensor(const struct scmi_sensor_info *sensor_info,
 	if (!sensor_info || !scalar)
 		return -EINVAL;
 
-	if (sensor_info->num_axis > 1)
+	if (sensor_info->num_axis > 0)
 		*scalar = false;
 	else
 		*scalar = true;
@@ -138,7 +132,7 @@ static int scmi_iio_buffer_preenable(struct iio_dev *dev)
 	//TODO : (jbhayana) : Moved the register event notifier here instead of scmi_iio_dev_probe because of http://b/156036964
 	// Check if this can be moved back to scmi_iio_dev_probe later
 	err = sensor->handle->notify_ops->register_event_notifier(
-		sensor->handle, SCMI_PROTOCOL_SENSOR, SENSOR_UPDATE, &sensor_id,
+		sensor->handle, SCMI_PROTOCOL_SENSOR, SCMI_EVENT_SENSOR_UPDATE, &sensor_id,
 		&sensor_update_nb);
 
 	if (err) {
@@ -172,7 +166,7 @@ static int scmi_iio_buffer_postdisable(struct iio_dev *iio_dev)
 	// Check if this can be moved back to scmi_iio_dev_remove later
 
 	err = sensor->handle->notify_ops->unregister_event_notifier(
-		sensor->handle, SCMI_PROTOCOL_SENSOR, SENSOR_UPDATE, &sensor_id,
+		sensor->handle, SCMI_PROTOCOL_SENSOR, SCMI_EVENT_SENSOR_UPDATE, &sensor_id,
 		&sensor_update_nb);
 	if (err) {
 		printk(KERN_ERR
