@@ -60,5 +60,4 @@ struct virtio_scmi_delayed_resp {
 	__virtio32 status;
 	u8 data[];
 };
-
 #endif /* VIRTIO_SCMI_IF_H */

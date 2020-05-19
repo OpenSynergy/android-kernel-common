@@ -10,6 +10,7 @@
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
 #include <linux/module.h>
+#include <linux/virtio.h>
 #include <linux/virtio_config.h>
 #include <uapi/linux/virtio_ids.h>
 #include <uapi/linux/virtio_scmi.h>
@@ -23,29 +24,38 @@ struct scmi_vio_channel {
 	bool is_rx;
 };
 
-struct scmi_vio_msg {
-	uint32_t completed;
-	union {
-		struct virtio_scmi_request request;
-		struct virtio_scmi_response response;
-		struct virtio_scmi_notification notification;
-		struct virtio_scmi_delayed_resp delayed_resp;
-	};
+union virtio_scmi_union_input {
+	__virtio32 hdr;
+	struct virtio_scmi_response response;
+	struct virtio_scmi_notification notification;
+	struct virtio_scmi_delayed_resp delayed_resp;
 };
 
-static void scmi_vio_populate_vq_rx(struct scmi_vio_channel *vioch,
-				    struct scmi_vio_msg *msg)
+struct scmi_vio_msg {
+	struct virtio_scmi_request *request;
+	union virtio_scmi_union_input *input;
+	bool completed;
+};
+
+static int scmi_vio_populate_vq_rx(struct scmi_vio_channel *vioch,
+				    struct scmi_xfer *xfer)
 {
 	struct scatterlist sg_in;
-	struct scmi_xfer *xfer = msg_to_scmi_xfer(msg);
+	struct scmi_vio_msg *msg = SCMI_MSG_EXTRA(xfer);
+	int rc;
 
 	msg->completed = false;
 
-	sg_init_one(&sg_in, &msg->notification,
-		    sizeof(msg->notification) + xfer->rx.len);
+	sg_init_one(&sg_in, msg->input, sizeof(*msg->input) +
+		    VIRTIO_SCMI_MAX_MSG_SIZE);
 
-	if (!virtqueue_add_inbuf(vioch->vqueue, &sg_in, 1, msg, GFP_ATOMIC))
+	rc = virtqueue_add_inbuf(vioch->vqueue, &sg_in, 1, xfer, GFP_ATOMIC);
+	if (rc)
+		dev_err(vioch->cinfo->dev, "%s() rc=%d\n", __func__, rc);
+	else
 		virtqueue_kick(vioch->vqueue);
+
+	return rc;
 }
 
 static void scmi_vio_complete_cb(struct virtqueue *vqueue)
@@ -57,48 +67,51 @@ static void scmi_vio_complete_cb(struct virtqueue *vqueue)
 	spin_lock_irqsave(&vioch->lock, iflags);
 
 	do {
-		struct scmi_vio_msg *msg;
+		struct scmi_xfer *xfer;
 
 		virtqueue_disable_cb(vqueue);
 
-		while ((msg = virtqueue_get_buf(vqueue, &length))) {
-			struct scmi_xfer *xfer = msg_to_scmi_xfer(msg);
-			u8 msg_type = MSG_XTRACT_TYPE(msg->response.hdr);
-			u32 msg_hdr;
+		while ((xfer = virtqueue_get_buf(vqueue, &length))) {
+			struct scmi_vio_msg *msg = SCMI_MSG_EXTRA(xfer);
+			u32 msg_hdr = virtio32_to_cpu(vqueue->vdev,
+						      msg->input->hdr);
+			u8 msg_type = MSG_XTRACT_TYPE(msg_hdr);
 
-			msg->completed = true;
+			if (!vioch->is_rx) { /* TX queue - response */
+				msg->completed = true;
 
-			if (xfer->hdr.poll_completion)
+				xfer->rx.len = length -
+					sizeof(msg->input->response);
+
+				if (xfer->hdr.poll_completion)
+					continue;
+
+				scmi_rx_callback(vioch->cinfo, msg_hdr, xfer);
 				continue;
+			}
 
+			/* RX queue - notification or delayed_resp */
 			switch (msg_type) {
-			case MSG_TYPE_COMMAND:
-				msg_hdr = msg->response.hdr;
-				xfer->rx.buf = xfer->extra_data +
-					sizeof(uint32_t) +
-					sizeof(struct virtio_scmi_response);
-				break;
 			case MSG_TYPE_NOTIFICATION:
-				msg_hdr = msg->notification.hdr;
-				xfer->rx.buf = xfer->extra_data +
-					sizeof(uint32_t) +
-					sizeof(struct virtio_scmi_notification);
+				xfer->rx.len = length -
+					sizeof(msg->input->notification);
+				xfer->rx.buf = msg->input->notification.data;
 				break;
 			case MSG_TYPE_DELAYED_RESP:
-				msg_hdr = msg->delayed_resp.hdr;
-				xfer->rx.buf = xfer->extra_data +
-					sizeof(uint32_t) +
-					sizeof(struct virtio_scmi_delayed_resp);
+				xfer->rx.len = length -
+					sizeof(msg->input->delayed_resp);
+				xfer->rx.buf = msg->input->delayed_resp.data;
 				break;
 			default:
-				WARN_ONCE(1, "received unknown msg_type:%d\n",
-					  msg_type);
+				dev_warn_once(vioch->cinfo->dev,
+					      "VQ_RX: unknown msg_type:%d\n",
+					      msg_type);
+				scmi_vio_populate_vq_rx(vioch, xfer);
 				continue;
 			}
 
 			scmi_rx_callback(vioch->cinfo, msg_hdr, xfer);
-			if (vioch->is_rx)
-				scmi_vio_populate_vq_rx(vioch, msg);
+			scmi_vio_populate_vq_rx(vioch, xfer);
 		}
 
 		if (unlikely(virtqueue_is_broken(vqueue)))
@@ -113,7 +126,7 @@ static vq_callback_t *scmi_vio_complete_callbacks[] = {
 	scmi_vio_complete_cb
 };
 
-static const char * const scmi_vio_vqueue_names[] = { "vscmi-tx", "vscmi-rx" };
+static const char * const scmi_vio_vqueue_names[] = { "VQ_TX", "VQ_RX" };
 
 static bool virtio_chan_available(struct device *dev, int idx)
 {
@@ -139,7 +152,7 @@ static bool virtio_chan_available(struct device *dev, int idx)
 	if (!vioch)
 		return false;
 
-	return !!(vioch[idx] && vioch[idx]->vqueue);
+	return vioch[idx] && vioch[idx]->vqueue;
 }
 
 static int virtio_chan_setup(struct scmi_chan_info *cinfo, struct device *dev,
@@ -173,14 +186,20 @@ static int virtio_chan_setup(struct scmi_chan_info *cinfo, struct device *dev,
 	cinfo->transport_info = vioch[vioch_index];
 	vioch[vioch_index]->cinfo = cinfo;
 
+	*max_msg = virtqueue_get_vring_size(vioch[vioch_index]->vqueue);
+
+	/* Pre-allocated messages, no more than what hdr.seq can support */
+	if (WARN_ON(*max_msg > MSG_TOKEN_MAX)) {
+		dev_warn(dev, "Virtqueue capacity of %d messages exceeds %ld\n",
+			*max_msg, MSG_TOKEN_MAX);
+		*max_msg = MSG_TOKEN_MAX;
+	}
 	/*
 	 * VirtIO SCMI msg consumes 2 virtual queue descriptors for TX queue,
-	 * and 1 descriptor for RX queue.
+	 * and 1 descriptor for RX queue
 	 */
-	*max_msg = virtqueue_get_vring_size(vioch[vioch_index]->vqueue);
 	if (tx)
 		*max_msg /= 2;
-
 	return 0;
 }
 
@@ -199,25 +218,29 @@ static int virtio_chan_free(int id, void *p, void *data)
 }
 
 static int scmi_vio_send(struct scmi_vio_channel *vioch,
-			 struct scmi_vio_msg *msg)
+			  struct scmi_xfer *xfer)
 {
 	struct scatterlist sg_out;
 	struct scatterlist sg_in;
 	struct scatterlist *sgs[2] = {&sg_out, &sg_in};
-	struct scmi_xfer *xfer = msg_to_scmi_xfer(msg);
+	struct scmi_vio_msg *msg = SCMI_MSG_EXTRA(xfer);
 	unsigned long iflags;
 	int rc;
 
 	msg->completed = false;
 
-	sg_init_one(&sg_out, &msg->request,
-		    sizeof(msg->request) + xfer->tx.len);
-	sg_init_one(&sg_in, &msg->response,
-		    sizeof(msg->response) + xfer->rx.len);
+	sg_init_one(&sg_out, msg->request,
+		    sizeof(*msg->request) + xfer->tx.len);
+	sg_init_one(&sg_in, &msg->input->response,
+		    sizeof(msg->input->response) + xfer->rx.len);
 
 	spin_lock_irqsave(&vioch->lock, iflags);
-	rc =  virtqueue_add_sgs(vioch->vqueue, sgs, 1, 1, msg, GFP_ATOMIC);
-	virtqueue_kick(vioch->vqueue);
+	rc = virtqueue_add_sgs(vioch->vqueue, sgs, 1, 1, xfer, GFP_ATOMIC);
+
+	if (rc)
+		dev_err(vioch->cinfo->dev, "%s() rc=%d\n", __func__, rc);
+	else
+		virtqueue_kick(vioch->vqueue);
 	spin_unlock_irqrestore(&vioch->lock, iflags);
 
 	return rc;
@@ -233,10 +256,9 @@ static int virtio_send_message(struct scmi_chan_info *cinfo,
 
 	hdr = pack_scmi_header(&xfer->hdr);
 
-	if (xfer->tx.buf)
-		msg->request.hdr = cpu_to_virtio32(vdev, hdr);
+	msg->request->hdr = cpu_to_virtio32(vdev, hdr);
 
-	return scmi_vio_send(vioch, msg);
+	return scmi_vio_send(vioch, xfer);
 }
 
 static void dummy_fetch_notification(struct scmi_chan_info *cinfo,
@@ -259,7 +281,7 @@ static void virtio_fetch_response(struct scmi_chan_info *cinfo,
 	struct scmi_vio_msg *msg = SCMI_MSG_EXTRA(xfer);
 
 	xfer->hdr.status = virtio32_to_cpu(vioch->vqueue->vdev,
-					   msg->response.status);
+					   msg->input->response.status);
 }
 
 static bool
@@ -277,18 +299,59 @@ virtio_poll_done(struct scmi_chan_info *cinfo, struct scmi_xfer *xfer)
 	return completed;
 }
 
-static void
-virtio_populate_rx(struct scmi_chan_info *cinfo, struct scmi_xfer *xfer)
+int virtio_xfer_buffers_init(struct scmi_chan_info *cinfo,
+			     struct scmi_xfer *xfer, int max_msg_size)
 {
-	unsigned long iflags;
 	struct scmi_vio_channel *vioch = cinfo->transport_info;
-	struct scmi_vio_msg *msg = SCMI_MSG_EXTRA(xfer);
+	struct scmi_vio_msg *msg;
 
-	xfer->rx.len = VIRTIO_SCMI_MAX_MSG_SIZE;
+	msg = devm_kzalloc(cinfo->dev, sizeof(struct scmi_vio_msg), GFP_KERNEL);
+	if (!msg)
+		return -ENOMEM;
 
-	spin_lock_irqsave(&vioch->lock, iflags);
-	scmi_vio_populate_vq_rx(vioch, msg);
-	spin_unlock_irqrestore(&vioch->lock, iflags);
+	xfer->extra_data = msg;
+
+	if (vioch->is_rx) {
+		int rc;
+		unsigned long iflags;
+
+		msg->input = devm_kzalloc(cinfo->dev, sizeof(*msg->input) +
+					  max_msg_size, GFP_KERNEL);
+
+		if (!msg->input)
+			return -ENOMEM;
+
+		/*
+		 * xfer->rx.buf and xfer->rx.len will be set to
+		 * notification or delayed_resp specific values in receive
+		 * callback, according to the type of received message.
+		 */
+
+		spin_lock_irqsave(&vioch->lock, iflags);
+		rc = scmi_vio_populate_vq_rx(vioch, xfer);
+		spin_unlock_irqrestore(&vioch->lock, iflags);
+		if (rc)
+			return rc;
+	} else {
+		msg->request = devm_kzalloc(cinfo->dev,
+					    sizeof(struct virtio_scmi_request) +
+					    max_msg_size, GFP_KERNEL);
+		if (!msg->request)
+			return -ENOMEM;
+
+		xfer->tx.buf = msg->request->data;
+
+		msg->input = devm_kzalloc(
+			cinfo->dev, sizeof(msg->input->response) + max_msg_size,
+			GFP_KERNEL);
+
+		if (!msg->input)
+			return -ENOMEM;
+
+		xfer->rx.buf = msg->input->response.data;
+	}
+
+	return 0;
 }
 
 static struct scmi_transport_ops scmi_virtio_ops = {
@@ -300,15 +363,13 @@ static struct scmi_transport_ops scmi_virtio_ops = {
 	.fetch_notification = dummy_fetch_notification,
 	.clear_channel = dummy_clear_notification,
 	.poll_done = virtio_poll_done,
-	.put_rx_xfer = virtio_populate_rx,
+	.xfer_buffers_init = virtio_xfer_buffers_init,
 };
 
 const struct scmi_desc scmi_virtio_desc = {
 	.ops = &scmi_virtio_ops,
 	.max_rx_timeout_ms = 30, /* We may increase this if required */
 	.max_msg_size = VIRTIO_SCMI_MAX_MSG_SIZE,
-	.msg_extra_size = sizeof(struct scmi_vio_msg),
-	.msg_tx_offset = sizeof(uint32_t) + sizeof(struct virtio_scmi_request),
 };
 
 static int scmi_vio_probe(struct virtio_device *vdev)
@@ -394,5 +455,5 @@ static int __init virtio_scmi_init(void)
 
 subsys_initcall(virtio_scmi_init);
 
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("GPL v2");
 MODULE_DESCRIPTION("Virtio scmi device driver");

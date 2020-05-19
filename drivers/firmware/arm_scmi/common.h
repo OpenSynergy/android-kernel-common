@@ -131,7 +131,7 @@ struct scmi_msg {
  *	buffer for the rx path as we use for the tx path.
  * @done: command message transmit completion event
  * @async_done: pointer to delayed response message received event completion
- * @extra_data: Transport-specific private data.
+ * @extra_data: Transport-specific private data pointer.
  */
 struct scmi_xfer {
 	int transfer_id;
@@ -140,14 +140,10 @@ struct scmi_xfer {
 	struct scmi_msg rx;
 	struct completion done;
 	struct completion *async_done;
-	u8 extra_data[];
+	void *extra_data;
 };
 
-#define SCMI_MSG_EXTRA(_msg_) ((void *)(_msg_)->extra_data)
-
-#define msg_to_scmi_xfer(_msg_) \
-	container_of((void *) _msg_, struct scmi_xfer, extra_data)
-
+#define SCMI_MSG_EXTRA(_msg_) ((_msg_)->extra_data)
 
 void scmi_xfer_put(const struct scmi_handle *h, struct scmi_xfer *xfer);
 int scmi_do_xfer(const struct scmi_handle *h, struct scmi_xfer *xfer);
@@ -193,10 +189,7 @@ struct scmi_chan_info {
  * @fetch_notification: Callback to fetch notification
  * @clear_channel: Callback to clear a channel
  * @poll_done: Callback to poll transfer status
- * @put_rx_xfer: Callback for rx channel xfer blocks management.
- *		 It has no meaning for mailbox transport, but, in virtio,
- *		 it is necessary to populate rx vqueue with free messages on
- *		 startup.
+ * @xfer_buffers_init: Callback to initialize buffers in scmi_xfer block
  */
 struct scmi_transport_ops {
 	bool (*chan_available)(struct device *dev, int idx);
@@ -212,8 +205,8 @@ struct scmi_transport_ops {
 				   size_t max_len, struct scmi_xfer *xfer);
 	void (*clear_channel)(struct scmi_chan_info *cinfo);
 	bool (*poll_done)(struct scmi_chan_info *cinfo, struct scmi_xfer *xfer);
-	void (*put_rx_xfer)(struct scmi_chan_info *cinfo,
-			    struct scmi_xfer *xfer);
+	int (*xfer_buffers_init)(struct scmi_chan_info *cinfo,
+				 struct scmi_xfer *xfer, int max_msg_size);
 };
 
 /**
@@ -222,15 +215,11 @@ struct scmi_transport_ops {
  * @ops: Pointer to the transport specific ops structure
  * @max_rx_timeout_ms: Timeout for communication with SoC (in Milliseconds)
  * @max_msg_size: Maximum size of data per message that can be handled.
- * @msg_extra_size: Size of the message transport-specific private data.
- * @msg_tx_offset:  Offset of scmi_xfer.tx.buf in scmi_xfer.extra_data.
  */
 struct scmi_desc {
 	struct scmi_transport_ops *ops;
 	int max_rx_timeout_ms;
 	int max_msg_size;
-	unsigned int msg_extra_size;
-	unsigned int msg_tx_offset;
 };
 
 #ifdef CONFIG_ARM_SCMI_MAILBOX_TRANSPORT

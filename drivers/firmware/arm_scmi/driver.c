@@ -56,15 +56,15 @@ static atomic_t transfer_last_id;
 /**
  * struct scmi_xfers_info - Structure to manage transfer information
  *
- * @xfer_block: Preallocated Message pointers array
+ * @xfer_block: Preallocated Message array
  * @xfer_alloc_table: Bitmap table for allocated messages.
  *	Index of this bitmap table is also used for message
  *	sequence identifier.
  * @xfer_lock: Protection for message allocation
- * @max_msg: Length of xfer blocks array
+ * @max_msg: Size of the xfer_block array
  */
 struct scmi_xfers_info {
-	struct scmi_xfer **xfer_block;
+	struct scmi_xfer *xfer_block;
 	unsigned long *xfer_alloc_table;
 	spinlock_t xfer_lock;
 	int max_msg;
@@ -172,7 +172,7 @@ static struct scmi_xfer *scmi_xfer_get(const struct scmi_handle *handle,
 
 	xfer_id = bit_pos;
 
-	xfer = minfo->xfer_block[xfer_id];
+	xfer = &minfo->xfer_block[xfer_id];
 	xfer->hdr.seq = xfer_id;
 	reinit_completion(&xfer->done);
 	xfer->transfer_id = atomic_inc_return(&transfer_last_id);
@@ -241,7 +241,7 @@ static void scmi_handle_response(struct scmi_chan_info *cinfo,
 		return;
 	}
 
-	xfer = minfo->xfer_block[xfer_id];
+	xfer = &minfo->xfer_block[xfer_id];
 	/*
 	 * Even if a response was indeed expected on this slot at this point,
 	 * a buggy platform could wrongly reply feeding us an unexpected
@@ -630,7 +630,8 @@ int scmi_handle_put(const struct scmi_handle *handle)
 }
 
 static int __scmi_xfer_info_init(struct scmi_info *sinfo,
-				 struct scmi_xfers_info *info)
+				 struct scmi_xfers_info *info,
+				 struct scmi_chan_info *base_cinfo)
 {
 	int i;
 	struct scmi_xfer *xfer;
@@ -638,14 +639,14 @@ static int __scmi_xfer_info_init(struct scmi_info *sinfo,
 	const struct scmi_desc *desc = sinfo->desc;
 
 	/* Pre-allocated messages, no more than what hdr.seq can support */
-	if (WARN_ON(info->max_msg >= MSG_TOKEN_MAX)) {
+	if (WARN_ON(info->max_msg > MSG_TOKEN_MAX)) {
 		dev_err(dev, "Maximum message of %d exceeds supported %ld\n",
 			info->max_msg, MSG_TOKEN_MAX);
 		return -EINVAL;
 	}
 
-	info->xfer_block = devm_kzalloc(dev, info->max_msg *
-					sizeof(struct scmi_xfer *), GFP_KERNEL);
+	info->xfer_block = devm_kcalloc(dev, info->max_msg,
+					sizeof(*info->xfer_block), GFP_KERNEL);
 	if (!info->xfer_block)
 		return -ENOMEM;
 
@@ -654,23 +655,25 @@ static int __scmi_xfer_info_init(struct scmi_info *sinfo,
 	if (!info->xfer_alloc_table)
 		return -ENOMEM;
 
-	for (i = 0; i < info->max_msg; i++) {
-		/*
-		 * xfer->extra_data points to data block, which consists of
-		 * transport specific data and headers, followed by transport
-		 *  block itself.
-		 */
-		xfer = devm_kzalloc(dev, sizeof(struct scmi_xfer) +
-				    desc->msg_extra_size + desc->max_msg_size,
-				    GFP_KERNEL);
-		if (!xfer)
-			return -ENOMEM;
+	/* Pre-initialize the buffer pointer to pre-allocated buffers */
+	for (i = 0, xfer = info->xfer_block; i < info->max_msg; i++, xfer++) {
 
-		xfer->tx.buf = xfer->extra_data + desc->msg_tx_offset;
-		xfer->rx.buf = xfer->extra_data;
+		if (desc->ops->xfer_buffers_init) {
+			int ret = desc->ops->xfer_buffers_init(
+				base_cinfo, xfer, desc->max_msg_size);
 
+			if (ret)
+				return ret;
+		} else {
+			xfer->rx.buf = devm_kcalloc(dev, sizeof(u8),
+						    desc->max_msg_size,
+						    GFP_KERNEL);
+			if (!xfer->rx.buf)
+				return -ENOMEM;
+
+			xfer->tx.buf = xfer->rx.buf;
+		}
 		init_completion(&xfer->done);
-		info->xfer_block[i] = xfer;
 	}
 
 	spin_lock_init(&info->xfer_lock);
@@ -680,23 +683,16 @@ static int __scmi_xfer_info_init(struct scmi_info *sinfo,
 
 static int scmi_xfer_info_init(struct scmi_info *sinfo)
 {
-	int i;
 	int ret;
-	struct scmi_chan_info *cinfo;
+	struct scmi_chan_info
+		*base_tx_cinfo = idr_find(&sinfo->tx_idr, SCMI_PROTOCOL_BASE),
+		*base_rx_cinfo = idr_find(&sinfo->rx_idr, SCMI_PROTOCOL_BASE);
 
-	ret = __scmi_xfer_info_init(sinfo, &sinfo->tx_minfo);
+	ret = __scmi_xfer_info_init(sinfo, &sinfo->tx_minfo, base_tx_cinfo);
 
-	cinfo = idr_find(&sinfo->rx_idr, SCMI_PROTOCOL_BASE);
-
-	if (!ret && cinfo) {
-		ret = __scmi_xfer_info_init(sinfo, &sinfo->rx_minfo);
-		if (ret || !sinfo->desc->ops->put_rx_xfer)
-			return ret;
-
-		for (i = 0; i < sinfo->rx_minfo.max_msg; i++)
-			sinfo->desc->ops->put_rx_xfer(
-				cinfo, sinfo->rx_minfo.xfer_block[i]);
-	}
+	if (!ret && base_rx_cinfo)
+		ret = __scmi_xfer_info_init(sinfo, &sinfo->rx_minfo,
+					    base_rx_cinfo);
 
 	return ret;
 }
