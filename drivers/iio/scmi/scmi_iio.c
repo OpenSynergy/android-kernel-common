@@ -34,13 +34,11 @@
 //one additional channel for timestamp
 #define SCMI_IIO_EXTRA_CHANNELS 1
 
-//TODO : (egranata,jbhayana) : Try to remove this global variable and move it to IIO private data
-static struct iio_dev **iio_dev_arr;
-
 struct scmi_iio_priv {
 	struct scmi_handle *handle;
 	const struct scmi_sensor_info *sensor_info;
 	u8 *iio_buf;
+	struct notifier_block sensor_update_nb;
 };
 
 static int scmi_iio_check_valid_sensor(struct scmi_iio_priv *sensor)
@@ -56,15 +54,18 @@ static int sensor_update_cb(struct notifier_block *nb, unsigned long event,
 	struct scmi_sensor_update_report *sensor_update = data;
 	u64 time, time_ns;
 	s64 sensor_value;
-	struct scmi_iio_priv *sensor;
-	struct iio_dev *scmi_iio_dev = iio_dev_arr[sensor_update->sensor_id];
+	struct scmi_iio_priv *sensor =
+		container_of(nb, struct scmi_iio_priv, sensor_update_nb);
+	struct iio_dev *scmi_iio_dev;
 	s8 tstamp_scale_ns;
 	int i, err;
-	sensor = iio_priv(scmi_iio_dev);
+
 	err = scmi_iio_check_valid_sensor(sensor);
 
 	if (err)
 		return err;
+
+	scmi_iio_dev = iio_priv_to_dev(sensor);
 
 	for (i = 0; i < sensor_update->readings_count; i++) {
 		sensor_value = COMBINE_32_TO_64(
@@ -96,9 +97,6 @@ static int sensor_update_cb(struct notifier_block *nb, unsigned long event,
 	return NOTIFY_OK;
 }
 
-static struct notifier_block sensor_update_nb = {
-	.notifier_call = sensor_update_cb,
-};
 static int scmi_iio_is_scalar_sensor(const struct scmi_sensor_info *sensor_info,
 				     bool *scalar)
 {
@@ -129,11 +127,9 @@ static int scmi_iio_buffer_preenable(struct iio_dev *dev)
 
 	sensor_config = SCMI_SENSOR_CFG_SET_ENABLE(sensor_config);
 
-	//TODO : (jbhayana) : Moved the register event notifier here instead of scmi_iio_dev_probe because of http://b/156036964
-	// Check if this can be moved back to scmi_iio_dev_probe later
 	err = sensor->handle->notify_ops->register_event_notifier(
-		sensor->handle, SCMI_PROTOCOL_SENSOR, SCMI_EVENT_SENSOR_UPDATE, &sensor_id,
-		&sensor_update_nb);
+		sensor->handle, SCMI_PROTOCOL_SENSOR, SCMI_EVENT_SENSOR_UPDATE,
+		&sensor_id, &sensor->sensor_update_nb);
 
 	if (err) {
 		printk(KERN_ERR
@@ -162,12 +158,9 @@ static int scmi_iio_buffer_postdisable(struct iio_dev *iio_dev)
 
 	sensor_config = SCMI_SENSOR_CFG_SET_DISABLE(sensor_config);
 
-	//TODO : (jbhayana) : Moved the unregister event notifier here instead of scmi_iio_dev_remove because of http://b/156036964
-	// Check if this can be moved back to scmi_iio_dev_remove later
-
 	err = sensor->handle->notify_ops->unregister_event_notifier(
-		sensor->handle, SCMI_PROTOCOL_SENSOR, SCMI_EVENT_SENSOR_UPDATE, &sensor_id,
-		&sensor_update_nb);
+		sensor->handle, SCMI_PROTOCOL_SENSOR, SCMI_EVENT_SENSOR_UPDATE,
+		&sensor_id, &sensor->sensor_update_nb);
 	if (err) {
 		printk(KERN_ERR
 		       "Error in unregistering sensor update notifier for sensor %s err %d",
@@ -472,6 +465,7 @@ scmi_iio_alloc_nonscalar_sensor(struct device *dev, struct scmi_handle *handle,
 	sensor = iio_priv(iio_dev_temp);
 	sensor->handle = handle;
 	sensor->sensor_info = sensor_info;
+	sensor->sensor_update_nb.notifier_call = sensor_update_cb;
 	iio_dev_temp->num_channels =
 		sensor_info->num_axis + SCMI_IIO_EXTRA_CHANNELS;
 	iio_dev_temp->name = sensor_info->name;
@@ -495,7 +489,6 @@ scmi_iio_alloc_nonscalar_sensor(struct device *dev, struct scmi_handle *handle,
 	}
 	scmi_iio_set_timestamp_channel(&iio_channels[i], i);
 	iio_dev_temp->channels = iio_channels;
-	iio_dev_arr[sensor_info->id] = iio_dev_temp;
 	*scmi_iio_dev = iio_dev_temp;
 	return ret;
 }
@@ -571,10 +564,6 @@ static int scmi_iio_dev_probe(struct scmi_device *sdev)
 
 	printk(KERN_INFO "%d sensors found via SCMI bus", nr_sensors);
 
-	iio_dev_arr = devm_kzalloc(
-		handle->dev, sizeof(struct iiodev *) * nr_sensors, GFP_KERNEL);
-	if (!iio_dev_arr)
-		return -ENOMEM;
 	dev = &sdev->dev;
 	for (i = 0; i < nr_sensors; i++) {
 		sensor_info = handle->sensor_ops->info_get(handle, i);
