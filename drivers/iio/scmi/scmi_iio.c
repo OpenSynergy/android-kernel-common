@@ -344,7 +344,7 @@ static ssize_t scmi_iio_get_sensor_power(struct device *dev,
 }
 
 static IIO_DEV_ATTR_SAMP_FREQ_AVAIL(scmi_iio_sysfs_sampling_freq_avail);
-static IIO_DEVICE_ATTR(sensor_power, 0440, scmi_iio_get_sensor_power, NULL, 0);
+static IIO_DEVICE_ATTR(sensor_power,S_IRUGO, scmi_iio_get_sensor_power, NULL, 0);
 
 // TODO(jbhayana) : Add support for sensor_max_range attribute (b/155129166)
 static struct attribute *scmi_iio_attributes[] = {
