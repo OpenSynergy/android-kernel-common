@@ -27,9 +27,10 @@
 		 ((x) | SCMI_SENSOR_UPDATE_INTERVAL_MULT_SIGN_EXTEND_MASK) :   \
 		 (x))
 
-#define USEC_MULT_POW_10 (const_ilog2(USEC_PER_SEC) / const_ilog2(10))
 #define NSEC_MULT_POW_10 (const_ilog2(NSEC_PER_SEC) / const_ilog2(10))
 #define COMBINE_32_TO_64(x, y) (((x) << 32) | (y))
+#define UHZ_PER_HZ 1000000UL
+#define ODR_EXPAND(odr, uodr) (((odr)*1000000ULL) + (uodr))
 
 //one additional channel for timestamp
 #define SCMI_IIO_EXTRA_CHANNELS 1
@@ -184,7 +185,8 @@ static ssize_t scmi_iio_sysfs_sampling_freq_avail(struct device *dev,
 {
 	struct scmi_iio_priv *sensor = iio_priv(dev_get_drvdata(dev));
 	int err = scmi_iio_check_valid_sensor(sensor);
-	u64 sensor_update_interval, sensor_interval_mult, freq_hz, freq_uhz;
+	u64 sensor_update_interval, sensor_interval_mult, freq_hz, freq_uhz,
+		rem;
 	int i, len = 0;
 	s8 mult;
 
@@ -202,7 +204,7 @@ static ssize_t scmi_iio_sysfs_sampling_freq_avail(struct device *dev,
 			sensor_update_interval =
 				SCMI_SENSOR_GET_UPDATE_INTERVAL_SEC(
 					sensor->sensor_info->intervals.desc[i]) *
-				USEC_PER_SEC;
+				NSEC_PER_SEC;
 			if (sensor->sensor_info->intervals.desc[i] &
 			    SCMI_SENSOR_UPDATE_INTERVAL_MULT_SIGN_MASK)
 				sensor_update_interval =
@@ -212,11 +214,11 @@ static ssize_t scmi_iio_sysfs_sampling_freq_avail(struct device *dev,
 				sensor_update_interval =
 					sensor_update_interval *
 					sensor_interval_mult;
-			freq_hz = div64_u64_rem(USEC_PER_SEC,
-						sensor_update_interval,
-						&freq_uhz);
+			freq_hz = div64_u64_rem(NSEC_PER_SEC,
+						sensor_update_interval, &rem);
+			freq_uhz = (rem * 1000000UL) / sensor_update_interval;
 			len += scnprintf(buf + len, PAGE_SIZE - len,
-					 "%llu.%llu ", freq_hz, freq_uhz);
+					 "%llu.%06llu ", freq_hz, freq_uhz);
 		}
 		buf[len - 1] = '\n';
 	}
@@ -229,23 +231,32 @@ static int scmi_iio_set_odr_val(struct iio_dev *iio_dev, int val, int val2)
 	struct scmi_iio_priv *sensor = iio_priv(iio_dev);
 	int err = scmi_iio_check_valid_sensor(sensor);
 	u32 sensor_config = 0;
-	u64 sec;
+	u64 sec, mult, uHz;
+	char buf[32];
 
 	if (err)
 		return err;
 
-	sec = div_u64(USEC_PER_SEC, val);
+	uHz = ODR_EXPAND(val, val2);
 
+	// The seconds field in the sensor interval in SCMI is 16 bits long
+	// Therefore seconds  = 1/Hz <= 0xFFFF. As floating point calculations are
+	// discouraged in the kernel driver code, to calculate the scale factor (sf)
+	// (1* 1000000 * sf)/uHz <= 0xFFFF. Therefore, sf <= (uHz * 0xFFFF)/1000000
+	//  To calculate the multiplier,we convert the sf into char string  and
+	//  count the number of characters
+
+	mult = scnprintf(buf, 32, "%llu", ((u64)uHz * 0xFFFF) / UHZ_PER_HZ) - 1;
+
+	sec = div64_u64(int_pow(10, mult) * UHZ_PER_HZ, uHz);
 	if (sec == 0) {
 		printk(KERN_ERR
 		       "Trying to set invalid sensor update value for sensor %s",
 		       sensor->sensor_info->name);
 		return -EINVAL;
 	}
-
 	sensor_config = SCMI_SENSOR_CFG_SET_UPDATE_SECS(sensor_config, sec);
-	sensor_config = SCMI_SENSOR_CFG_SET_UPDATE_MULTI(sensor_config,
-							 -USEC_MULT_POW_10);
+	sensor_config = SCMI_SENSOR_CFG_SET_UPDATE_MULTI(sensor_config, -mult);
 	sensor_config = SCMI_SENSOR_CFG_SET_AUTO_ROUND_UP(sensor_config);
 	if (sensor->sensor_info->timestamped)
 		sensor_config =
@@ -344,7 +355,8 @@ static ssize_t scmi_iio_get_sensor_power(struct device *dev,
 }
 
 static IIO_DEV_ATTR_SAMP_FREQ_AVAIL(scmi_iio_sysfs_sampling_freq_avail);
-static IIO_DEVICE_ATTR(sensor_power,S_IRUGO, scmi_iio_get_sensor_power, NULL, 0);
+static IIO_DEVICE_ATTR(sensor_power, S_IRUGO, scmi_iio_get_sensor_power, NULL,
+		       0);
 
 // TODO(jbhayana) : Add support for sensor_max_range attribute (b/155129166)
 static struct attribute *scmi_iio_attributes[] = {
