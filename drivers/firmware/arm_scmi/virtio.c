@@ -368,7 +368,7 @@ static struct scmi_transport_ops scmi_virtio_ops = {
 
 const struct scmi_desc scmi_virtio_desc = {
 	.ops = &scmi_virtio_ops,
-	.max_rx_timeout_ms = 30, /* We may increase this if required */
+	.max_rx_timeout_ms = 500, /* Can be increased if required */
 	.max_msg_size = VIRTIO_SCMI_MAX_MSG_SIZE,
 };
 
