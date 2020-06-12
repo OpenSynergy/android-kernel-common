@@ -354,14 +354,42 @@ static ssize_t scmi_iio_get_sensor_power(struct device *dev,
 	return len;
 }
 
+static ssize_t scmi_iio_get_sensor_max_range(struct device *dev,
+					     struct device_attribute *attr,
+					     char *buf)
+{
+	struct scmi_iio_priv *sensor = iio_priv(dev_get_drvdata(dev));
+	int err = scmi_iio_check_valid_sensor(sensor);
+	int i;
+	s64 max_range = S64_MIN, max_range_axis;
+
+	if (err)
+		return err;
+
+	for (i = 0; i < sensor->sensor_info->num_axis; i++) {
+		if (sensor->sensor_info->axis[i].extended_attrs) {
+			max_range_axis = COMBINE_32_TO_64(
+				(s64)sensor->sensor_info->axis[i]
+					.attrs.max_range_high,
+				sensor->sensor_info->axis[i]
+					.attrs.max_range_low);
+			max_range = max(max_range, max_range_axis);
+		}
+	}
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n", max_range);
+}
+
 static IIO_DEV_ATTR_SAMP_FREQ_AVAIL(scmi_iio_sysfs_sampling_freq_avail);
 static IIO_DEVICE_ATTR(sensor_power, S_IRUGO, scmi_iio_get_sensor_power, NULL,
 		       0);
+static IIO_DEVICE_ATTR(sensor_max_range, S_IRUGO, scmi_iio_get_sensor_max_range,
+		       NULL, 0);
 
-// TODO(jbhayana) : Add support for sensor_max_range attribute (b/155129166)
 static struct attribute *scmi_iio_attributes[] = {
 	&iio_dev_attr_sampling_frequency_available.dev_attr.attr,
 	&iio_dev_attr_sensor_power.dev_attr.attr,
+	&iio_dev_attr_sensor_max_range.dev_attr.attr,
 	NULL,
 };
 static const struct attribute_group scmi_iio_attribute_group = {
