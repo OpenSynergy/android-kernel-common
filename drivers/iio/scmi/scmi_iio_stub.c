@@ -28,7 +28,6 @@ static int scmi_sensor_count_get(const struct scmi_handle *handle)
 //Stub Sampling frequency available for the sensors
 static u32 sampling_freq_avail[] = { 0x641C, 0x301C, 0x181C, 0xC1C, 0x61C,
 				     0x31C,  0x19C,  0xDC,   0x7C,  0x12BA };
-
 #define NUM_OF_SAMP_FREQ                                                       \
 	sizeof(sampling_freq_avail) / sizeof(sampling_freq_avail[0])
 
@@ -89,7 +88,7 @@ static struct scmi_sensor_info accel_info = {
 	.type = METERS_SEC_SQUARED,
 	.scale = 5,
 	.async = true,
-	.name = "scmi.iio.accel", 
+	.name = "scmi.iio.accel",
 	.num_trip_points = 0,
 	.update = true,
 	.timestamped = true,

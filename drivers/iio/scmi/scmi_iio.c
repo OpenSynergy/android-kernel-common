@@ -42,6 +42,11 @@ struct scmi_iio_priv {
 	struct notifier_block sensor_update_nb;
 };
 
+struct sensor_freq {
+	u64 hz;
+	u64 uhz;
+};
+
 static int scmi_iio_check_valid_sensor(struct scmi_iio_priv *sensor)
 {
 	if (!sensor || !sensor->handle || !sensor->sensor_info)
@@ -179,50 +184,98 @@ static int scmi_iio_buffer_postdisable(struct iio_dev *iio_dev)
 	return err;
 }
 
+static u64 convert_interval_to_ns(u32 interval)
+{
+	u64 sensor_update_interval, sensor_interval_mult;
+	s8 mult;
+
+	mult = SCMI_SENSOR_UPDATE_INTERVAL_MULT_SIGN_EXTEND(
+		SCMI_SENSOR_GET_UPDATE_INTERVAL_MULT(interval));
+	mult = abs(mult);
+	sensor_interval_mult = int_pow(10, mult);
+	sensor_update_interval =
+		SCMI_SENSOR_GET_UPDATE_INTERVAL_SEC(interval) * NSEC_PER_SEC;
+	if (interval & SCMI_SENSOR_UPDATE_INTERVAL_MULT_SIGN_MASK)
+		sensor_update_interval =
+			sensor_update_interval / sensor_interval_mult;
+	else
+		sensor_update_interval =
+			sensor_update_interval * sensor_interval_mult;
+
+	return sensor_update_interval;
+}
+
+static int convert_ns_to_freq(u64 interval_ns, struct sensor_freq *freq)
+{
+	u64 rem;
+
+	if (!freq)
+		return -EINVAL;
+
+	freq->hz = div64_u64_rem(NSEC_PER_SEC, interval_ns, &rem);
+	freq->uhz = (rem * 1000000UL) / interval_ns;
+
+	return 0;
+}
+
 static ssize_t scmi_iio_sysfs_sampling_freq_avail(struct device *dev,
 						  struct device_attribute *attr,
 						  char *buf)
 {
 	struct scmi_iio_priv *sensor = iio_priv(dev_get_drvdata(dev));
 	int err = scmi_iio_check_valid_sensor(sensor);
-	u64 sensor_update_interval, sensor_interval_mult, freq_hz, freq_uhz,
-		rem;
+	struct sensor_freq freq;
+	u64 lowest_interval_ns, highest_interval_ns, cur_interval_ns,
+		step_size_ns;
 	int i, len = 0;
-	s8 mult;
 
 	if (err)
 		return err;
 
-	// TODO(jbhayana) : Add support for segmented intervals (b/155122344)
 	if (!sensor->sensor_info->intervals.segmented) {
 		for (i = 0; i < sensor->sensor_info->intervals.count; i++) {
-			mult = SCMI_SENSOR_UPDATE_INTERVAL_MULT_SIGN_EXTEND(
-				SCMI_SENSOR_GET_UPDATE_INTERVAL_MULT(
-					sensor->sensor_info->intervals.desc[i]));
-			mult = mult < 0 ? -mult : mult;
-			sensor_interval_mult = int_pow(10, mult);
-			sensor_update_interval =
-				SCMI_SENSOR_GET_UPDATE_INTERVAL_SEC(
-					sensor->sensor_info->intervals.desc[i]) *
-				NSEC_PER_SEC;
-			if (sensor->sensor_info->intervals.desc[i] &
-			    SCMI_SENSOR_UPDATE_INTERVAL_MULT_SIGN_MASK)
-				sensor_update_interval =
-					sensor_update_interval /
-					sensor_interval_mult;
-			else
-				sensor_update_interval =
-					sensor_update_interval *
-					sensor_interval_mult;
-			freq_hz = div64_u64_rem(NSEC_PER_SEC,
-						sensor_update_interval, &rem);
-			freq_uhz = (rem * 1000000UL) / sensor_update_interval;
+			cur_interval_ns = convert_interval_to_ns(
+				sensor->sensor_info->intervals.desc[i]);
+			err = convert_ns_to_freq(cur_interval_ns, &freq);
+			if (err)
+				return 0;
+
 			len += scnprintf(buf + len, PAGE_SIZE - len,
-					 "%llu.%06llu ", freq_hz, freq_uhz);
+					 "%llu.%06llu ", freq.hz, freq.uhz);
 		}
-		buf[len - 1] = '\n';
+	} else {
+		// If the intervals are segmented, the intervals array is a triplet
+		// which constitues a segment in the form of
+		// [lowest_interval,highest_interval,step_size]
+		if (sensor->sensor_info->intervals.count != 3) {
+			printk(KERN_ERR
+			       "SCMI sensor %s has segmented update intervals count %d which is not a triplet",
+			       sensor->sensor_info->name,
+			       sensor->sensor_info->intervals.count);
+			return len;
+		} else {
+			lowest_interval_ns = convert_interval_to_ns(
+				sensor->sensor_info->intervals.desc[0]);
+			highest_interval_ns = convert_interval_to_ns(
+				sensor->sensor_info->intervals.desc[1]);
+			step_size_ns = convert_interval_to_ns(
+				sensor->sensor_info->intervals.desc[2]);
+			cur_interval_ns = lowest_interval_ns;
+			while (cur_interval_ns <= highest_interval_ns) {
+				err = convert_ns_to_freq(cur_interval_ns,
+							 &freq);
+				if (err)
+					return 0;
+				len += scnprintf(buf + len, PAGE_SIZE - len,
+						 "%llu.%06llu ", freq.hz,
+						 freq.uhz);
+				cur_interval_ns += step_size_ns;
+			}
+		}
 	}
 
+	if (len > 0)
+		buf[len - 1] = '\n';
 	return len;
 }
 
