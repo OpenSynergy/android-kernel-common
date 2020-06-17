@@ -737,6 +737,17 @@ static int scmi_dvfs_est_power_get(const struct scmi_handle *handle, u32 domain,
 	return ret;
 }
 
+static bool scmi_fast_switch_possible(const struct scmi_handle *handle,
+				      struct device *dev)
+{
+	struct perf_dom_info *dom;
+	struct scmi_perf_info *pi = handle->perf_priv;
+
+	dom = pi->dom_info + scmi_dev_domain_id(dev);
+
+	return dom->fc_info && dom->fc_info->level_set_addr;
+}
+
 static struct scmi_perf_ops perf_ops = {
 	.limits_set = scmi_perf_limits_set,
 	.limits_get = scmi_perf_limits_get,
@@ -748,6 +759,7 @@ static struct scmi_perf_ops perf_ops = {
 	.freq_set = scmi_dvfs_freq_set,
 	.freq_get = scmi_dvfs_freq_get,
 	.est_power_get = scmi_dvfs_est_power_get,
+	.fast_switch_possible = scmi_fast_switch_possible,
 };
 
 static bool scmi_perf_set_notify_enabled(const struct scmi_handle *handle,
