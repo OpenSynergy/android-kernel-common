@@ -79,6 +79,7 @@
 #include <linux/err.h>
 #include <linux/hashtable.h>
 #include <linux/kernel.h>
+#include <linux/ktime.h>
 #include <linux/kfifo.h>
 #include <linux/list.h>
 #include <linux/mutex.h>
@@ -226,18 +227,18 @@ struct events_queue {
  * struct scmi_event_header  - A utility header
  * @timestamp: The timestamp, in nanoseconds (boottime), which was associated
  *	       to this event as soon as it entered the SCMI RX ISR
- * @evt_id: Event ID (corresponds to the Event MsgID for this Protocol)
  * @payld_sz: Effective size of the embedded message payload which follows
+ * @evt_id: Event ID (corresponds to the Event MsgID for this Protocol)
  * @payld: A reference to the embedded event payload
  *
  * This header is prepended to each received event message payload before
  * queueing it on the related &struct events_queue.
  */
 struct scmi_event_header {
-	u64	timestamp;
-	u8	evt_id;
-	size_t	payld_sz;
-	u8	payld[];
+	ktime_t timestamp;
+	size_t payld_sz;
+	unsigned char evt_id;
+	unsigned char payld[];
 };
 
 struct scmi_registered_event;
@@ -544,7 +545,7 @@ static void scmi_events_dispatcher(struct work_struct *work)
  * Return: 0 on Success
  */
 int scmi_notify(const struct scmi_handle *handle, u8 proto_id, u8 evt_id,
-		const void *buf, size_t len, u64 ts)
+		const void *buf, size_t len, ktime_t ts)
 {
 	struct scmi_registered_event *r_evt;
 	struct scmi_event_header eh;
@@ -564,10 +565,10 @@ int scmi_notify(const struct scmi_handle *handle, u8 proto_id, u8 evt_id,
 		pr_err("SCMI Notifications: discard badly sized message\n");
 		return -EINVAL;
 	}
-	if (unlikely(kfifo_avail(&r_evt->proto->equeue.kfifo) <
-		     sizeof(eh) + len)) {
-		pr_warn("SCMI Notifications: queue full dropping proto_id:%d  evt_id:%d  ts:%lld\n",
-			proto_id, evt_id, ts);
+	if (kfifo_avail(&r_evt->proto->equeue.kfifo) < sizeof(eh) + len) {
+		dev_warn(handle->dev,
+			 "queue full, dropping proto_id:%d  evt_id:%d  ts:%lld\n",
+			 proto_id, evt_id, ktime_to_ns(ts));
 		return -ENOMEM;
 	}
 

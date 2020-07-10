@@ -264,10 +264,10 @@ static void scmi_handle_response(struct scmi_chan_info *cinfo,
 static void scmi_handle_notification_direct(struct scmi_chan_info *cinfo,
 					    struct scmi_xfer *xfer, u32 msg_hdr)
 {
-	u64 ts;
 	struct device *dev = cinfo->dev;
+	ktime_t ts;
 
-	ts = ktime_get_boottime_ns();
+	ts = ktime_get_boottime();
 
 	unpack_scmi_header(msg_hdr, &xfer->hdr);
 	scmi_dump_header_dbg(dev, &xfer->hdr);
