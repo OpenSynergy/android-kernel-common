@@ -640,43 +640,58 @@ static int scmi_iio_dev_probe(struct scmi_device *sdev)
 	int err = 0, i;
 	struct device *dev;
 
-	printk(KERN_DEBUG "scmi_iio_drv_probe enter\n");
-
-	if (sdev == NULL)
+	if (sdev == NULL) {
+		printk(KERN_ERR "scmi_iio_dev: missing SCMI device\n");
 		return -ENODEV;
+	}
+
+	dev = &sdev->dev;
 
 	handle = sdev->handle;
-	if (!handle || !handle->sensor_ops)
+	if (!handle || !handle->sensor_ops) {
+		dev_err(dev, "SCMI device has no sensor interface\n");
 		return -EINVAL;
+	}
 
 	nr_sensors = handle->sensor_ops->count_get(handle);
 	if (!nr_sensors) {
-		printk(KERN_ERR "No sensors found via SCMI bus");
+		dev_warn(dev, "0 sensors found via SCMI bus\n");
 		return -EINVAL;
+	} else {
+		dev_info(dev, "%d sensors found via SCMI bus\n", nr_sensors);
 	}
 
-	printk(KERN_INFO "%d sensors found via SCMI bus", nr_sensors);
-
-	dev = &sdev->dev;
 	for (i = 0; i < nr_sensors; i++) {
 		sensor_info = handle->sensor_ops->info_get(handle, i);
-		if (!sensor_info)
+		if (!sensor_info) {
+			dev_err(dev, "SCMI sensor %d has missing info\n", i);
 			return -EINVAL;
+		}
 		err = scmi_alloc_iiodev(dev, handle, sensor_info,
 					&scmi_iio_dev);
-		if (err < 0)
+		if (err < 0) {
+			dev_err(dev, "memory allocation error at sensor %s: %d\n",
+				sensor_info->name, err);
 			return err;
-		if (!scmi_iio_dev)
+		}
+		if (!scmi_iio_dev) {
+			dev_err(dev, "memory allocation failed at sensor %s\n",
+				sensor_info->name);
 			return -ENOMEM;
+		}
 		err = scmi_iio_buffers_setup(scmi_iio_dev);
-		if (err < 0)
+		if (err < 0) {
+			dev_err(dev, "IIO buffer setup error at sensor %s: %d\n",
+				sensor_info->name, err);
 			return err;
+		}
 		err = devm_iio_device_register(dev, scmi_iio_dev);
-		if (err)
+		if (err) {
+			dev_err(dev, "IIO device registration failed at sensor %s: %d\n",
+				sensor_info->name, err);
 			return err;
+		}
 	}
-
-	printk(KERN_DEBUG "scmi_iio_dev_probe successful\n");
 
 	return err;
 }
