@@ -29,3 +29,6 @@ obj-$(CONFIG_USB_NET_RNDIS_WLAN)	+= rndis_wlan.o
 obj-$(CONFIG_MAC80211_HWSIM)	+= mac80211_hwsim.o
 
 obj-$(CONFIG_VIRT_WIFI)	+= virt_wifi.o
+
+virt_wifi_sim-objs := virt_wifi_simulation.o virt_wifi_data.o
+obj-$(CONFIG_VIRT_WIFI_SIM)	+= virt_wifi_sim.o
