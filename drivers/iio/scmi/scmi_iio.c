@@ -239,7 +239,6 @@ static ssize_t scmi_iio_sysfs_sampling_freq_avail(struct device *dev,
 			err = convert_ns_to_freq(cur_interval_ns, &freq);
 			if (err)
 				return 0;
-
 			len += scnprintf(buf + len, PAGE_SIZE - len,
 					 "%llu.%06llu ", freq.hz, freq.uhz);
 		}
@@ -283,12 +282,22 @@ static int scmi_iio_set_odr_val(struct iio_dev *iio_dev, int val, int val2)
 {
 	struct scmi_iio_priv *sensor = iio_priv(iio_dev);
 	int err = scmi_iio_check_valid_sensor(sensor);
-	u32 sensor_config = 0;
+	u32 sensor_config = 0, cur_sensor_config;
 	u64 sec, mult, uHz;
 	char buf[32];
 
 	if (err)
 		return err;
+
+	err = sensor->handle->sensor_ops->config_get(
+		sensor->handle, sensor->sensor_info->id, &cur_sensor_config);
+
+	if (err) {
+		printk(KERN_ERR
+		       "scmi_iio_set_odr_val: Error in getting sensor config for sensor %s err %d",
+		       sensor->sensor_info->name, err);
+		return err;
+	}
 
 	uHz = ODR_EXPAND(val, val2);
 
@@ -308,12 +317,21 @@ static int scmi_iio_set_odr_val(struct iio_dev *iio_dev, int val, int val2)
 		       sensor->sensor_info->name);
 		return -EINVAL;
 	}
+
+	// Not able to use cur_sensor_config to build/modify the sensor config with
+	// new configuration as the SCMI macros below doesn't clear the old values
+	// and executes bitwise operations over them. Therefore, building new sensor config
+	// from scratch.
 	sensor_config = SCMI_SENSOR_CFG_SET_UPDATE_SECS(sensor_config, sec);
 	sensor_config = SCMI_SENSOR_CFG_SET_UPDATE_MULTI(sensor_config, -mult);
 	sensor_config = SCMI_SENSOR_CFG_SET_AUTO_ROUND_UP(sensor_config);
 	if (sensor->sensor_info->timestamped)
 		sensor_config =
 			SCMI_SENSOR_CFG_SET_TSTAMP_ENABLED(sensor_config);
+	if (SCMI_SENSOR_CFG_IS_ENABLED(cur_sensor_config))
+		sensor_config = SCMI_SENSOR_CFG_SET_ENABLE(sensor_config);
+	else
+		sensor_config = SCMI_SENSOR_CFG_SET_DISABLE(sensor_config);
 
 	err = sensor->handle->sensor_ops->config_set(
 		sensor->handle, sensor->sensor_info->id, sensor_config);
@@ -322,7 +340,6 @@ static int scmi_iio_set_odr_val(struct iio_dev *iio_dev, int val, int val2)
 		printk(KERN_ERR
 		       "Error in setting sensor update interval for sensor %s value %u err %d",
 		       sensor->sensor_info->name, sensor_config, err);
-
 	return err;
 }
 
@@ -670,7 +687,8 @@ static int scmi_iio_dev_probe(struct scmi_device *sdev)
 		err = scmi_alloc_iiodev(dev, handle, sensor_info,
 					&scmi_iio_dev);
 		if (err < 0) {
-			dev_err(dev, "memory allocation error at sensor %s: %d\n",
+			dev_err(dev,
+				"memory allocation error at sensor %s: %d\n",
 				sensor_info->name, err);
 			return err;
 		}
@@ -681,13 +699,15 @@ static int scmi_iio_dev_probe(struct scmi_device *sdev)
 		}
 		err = scmi_iio_buffers_setup(scmi_iio_dev);
 		if (err < 0) {
-			dev_err(dev, "IIO buffer setup error at sensor %s: %d\n",
+			dev_err(dev,
+				"IIO buffer setup error at sensor %s: %d\n",
 				sensor_info->name, err);
 			return err;
 		}
 		err = devm_iio_device_register(dev, scmi_iio_dev);
 		if (err) {
-			dev_err(dev, "IIO device registration failed at sensor %s: %d\n",
+			dev_err(dev,
+				"IIO device registration failed at sensor %s: %d\n",
 				sensor_info->name, err);
 			return err;
 		}
