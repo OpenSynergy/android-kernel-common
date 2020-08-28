@@ -61,7 +61,7 @@ static atomic_t transfer_last_id;
  *	Index of this bitmap table is also used for message
  *	sequence identifier.
  * @xfer_lock: Protection for message allocation
- * @max_msg: Size of the xfer_block array
+ * @max_msg: Maximum number of messages that can be pending
  */
 struct scmi_xfers_info {
 	struct scmi_xfer *xfer_block;
@@ -630,6 +630,7 @@ int scmi_handle_put(const struct scmi_handle *handle)
 
 static int __scmi_xfer_info_init(struct scmi_info *sinfo,
 				 struct scmi_xfers_info *info,
+				 bool tx,
 				 struct scmi_chan_info *base_cinfo)
 {
 	int i;
@@ -637,8 +638,18 @@ static int __scmi_xfer_info_init(struct scmi_info *sinfo,
 	struct device *dev = sinfo->dev;
 	const struct scmi_desc *desc = sinfo->desc;
 
+	info->max_msg = desc->max_msg;
+
+	if (desc->ops->get_max_msg) {
+		int ret =
+			desc->ops->get_max_msg(tx, base_cinfo, &info->max_msg);
+
+		if (ret)
+			return ret;
+	}
+
 	/* Pre-allocated messages, no more than what hdr.seq can support */
-	if (WARN_ON(info->max_msg > MSG_TOKEN_MAX)) {
+	if (WARN_ON(info->max_msg >= MSG_TOKEN_MAX)) {
 		dev_err(dev, "Maximum message of %d exceeds supported %ld\n",
 			info->max_msg, MSG_TOKEN_MAX);
 		return -EINVAL;
@@ -656,22 +667,12 @@ static int __scmi_xfer_info_init(struct scmi_info *sinfo,
 
 	/* Pre-initialize the buffer pointer to pre-allocated buffers */
 	for (i = 0, xfer = info->xfer_block; i < info->max_msg; i++, xfer++) {
+		xfer->rx.buf = devm_kcalloc(dev, sizeof(u8), desc->max_msg_size,
+					    GFP_KERNEL);
+		if (!xfer->rx.buf)
+			return -ENOMEM;
 
-		if (desc->ops->xfer_buffers_init) {
-			int ret = desc->ops->xfer_buffers_init(
-				base_cinfo, xfer, desc->max_msg_size);
-
-			if (ret)
-				return ret;
-		} else {
-			xfer->rx.buf = devm_kcalloc(dev, sizeof(u8),
-						    desc->max_msg_size,
-						    GFP_KERNEL);
-			if (!xfer->rx.buf)
-				return -ENOMEM;
-
-			xfer->tx.buf = xfer->rx.buf;
-		}
+		xfer->tx.buf = xfer->rx.buf;
 		init_completion(&xfer->done);
 	}
 
@@ -683,14 +684,19 @@ static int __scmi_xfer_info_init(struct scmi_info *sinfo,
 static int scmi_xfer_info_init(struct scmi_info *sinfo)
 {
 	int ret;
-	struct scmi_chan_info
-		*base_tx_cinfo = idr_find(&sinfo->tx_idr, SCMI_PROTOCOL_BASE),
-		*base_rx_cinfo = idr_find(&sinfo->rx_idr, SCMI_PROTOCOL_BASE);
+	struct scmi_chan_info *base_tx_cinfo;
+	struct scmi_chan_info *base_rx_cinfo;
 
-	ret = __scmi_xfer_info_init(sinfo, &sinfo->tx_minfo, base_tx_cinfo);
+	base_tx_cinfo = idr_find(&sinfo->tx_idr, SCMI_PROTOCOL_BASE);
+	if (unlikely(!base_tx_cinfo))
+		return -EINVAL;
 
+	ret = __scmi_xfer_info_init(sinfo, &sinfo->tx_minfo, true,
+				    base_tx_cinfo);
+
+	base_rx_cinfo = idr_find(&sinfo->rx_idr, SCMI_PROTOCOL_BASE);
 	if (!ret && base_rx_cinfo)
-		ret = __scmi_xfer_info_init(sinfo, &sinfo->rx_minfo,
+		ret = __scmi_xfer_info_init(sinfo, &sinfo->rx_minfo, false,
 					    base_rx_cinfo);
 
 	return ret;
