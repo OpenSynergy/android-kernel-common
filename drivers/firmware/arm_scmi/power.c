@@ -5,6 +5,8 @@
  * Copyright (C) 2018 ARM Ltd.
  */
 
+#define pr_fmt(fmt) "SCMI Notifications POWER - " fmt
+
 #include <linux/scmi_protocol.h>
 
 #include "common.h"
@@ -218,8 +220,8 @@ static int scmi_power_set_notify_enabled(const struct scmi_handle *handle,
 
 	ret = scmi_power_request_notify(handle, src_id, enable);
 	if (ret)
-		pr_warn("SCMI Notifications - Proto:%X - FAIL_ENABLE - evt[%X] dom[%d] - ret:%d\n",
-				SCMI_PROTOCOL_POWER, evt_id, src_id, ret);
+		pr_debug("FAIL_ENABLE - evt[%X] dom[%d] - ret:%d\n",
+			 evt_id, src_id, ret);
 
 	return ret;
 }
@@ -229,30 +231,19 @@ static void *scmi_power_fill_custom_report(const struct scmi_handle *handle,
 					   const void *payld, size_t payld_sz,
 					   void *report, u32 *src_id)
 {
-	void *rep = NULL;
+	const struct scmi_power_state_notify_payld *p = payld;
+	struct scmi_power_state_changed_report *r = report;
 
-	switch (evt_id) {
-	case SCMI_EVENT_POWER_STATE_CHANGED:
-	{
-		const struct scmi_power_state_notify_payld *p = payld;
-		struct scmi_power_state_changed_report *r = report;
+	if (evt_id != SCMI_EVENT_POWER_STATE_CHANGED || sizeof(*p) != payld_sz)
+		return NULL;
 
-		if (sizeof(*p) != payld_sz)
-			break;
+	r->timestamp = timestamp;
+	r->agent_id = le32_to_cpu(p->agent_id);
+	r->domain_id = le32_to_cpu(p->domain_id);
+	r->power_state = le32_to_cpu(p->power_state);
+	*src_id = r->domain_id;
 
-		r->timestamp = timestamp;
-		r->agent_id = le32_to_cpu(p->agent_id);
-		r->domain_id = le32_to_cpu(p->domain_id);
-		r->power_state = le32_to_cpu(p->power_state);
-		*src_id = r->domain_id;
-		rep = r;
-		break;
-	}
-	default:
-		break;
-	}
-
-	return rep;
+	return r;
 }
 
 static const struct scmi_event power_events[] = {
@@ -298,7 +289,7 @@ static int scmi_power_protocol_init(struct scmi_handle *handle)
 	}
 
 	scmi_register_protocol_events(handle,
-				      SCMI_PROTOCOL_POWER, PAGE_SIZE,
+				      SCMI_PROTOCOL_POWER, SCMI_PROTO_QUEUE_SZ,
 				      &power_event_ops, power_events,
 				      ARRAY_SIZE(power_events),
 				      pinfo->num_domains);

@@ -261,15 +261,16 @@ static void scmi_handle_response(struct scmi_chan_info *cinfo,
 	}
 
 	scmi_handle_response_direct(cinfo, xfer, msg_type);
+
 }
 
 static void scmi_handle_notification_direct(struct scmi_chan_info *cinfo,
 					    struct scmi_xfer *xfer, u32 msg_hdr)
 {
-	struct device *dev = cinfo->dev;
 	ktime_t ts;
+	struct device *dev = cinfo->dev;
 
-	ts = ktime_get_boottime();
+	ts = ktime_get_boottime_ns();
 
 	unpack_scmi_header(msg_hdr, &xfer->hdr);
 	scmi_dump_header_dbg(dev, &xfer->hdr);
@@ -287,7 +288,7 @@ static void scmi_handle_notification(struct scmi_chan_info *cinfo, u32 msg_hdr)
 	struct device *dev = cinfo->dev;
 	struct scmi_info *info = handle_to_scmi_info(cinfo->handle);
 	struct scmi_xfers_info *minfo = &info->rx_minfo;
-
+	
 	xfer = scmi_xfer_get(cinfo->handle, minfo);
 	if (IS_ERR(xfer)) {
 		dev_err(dev, "failed to get free message slot (%ld)\n",
@@ -318,8 +319,7 @@ static void scmi_handle_notification(struct scmi_chan_info *cinfo, u32 msg_hdr)
  * NOTE: This function will be invoked in IRQ context, hence should be
  * as optimal as possible.
  */
-void scmi_rx_callback(struct scmi_chan_info *cinfo, u32 msg_hdr,
-		      struct scmi_xfer *xfer)
+void scmi_rx_callback(struct scmi_chan_info *cinfo, u32 msg_hdr, struct scmi_xfer *xfer)
 {
 	u16 xfer_id = MSG_XTRACT_TOKEN(msg_hdr);
 	u8 msg_type = MSG_XTRACT_TYPE(msg_hdr);
@@ -752,12 +752,10 @@ static int scmi_chan_setup(struct scmi_info *info, struct device *dev,
 	int ret, idx;
 	struct scmi_chan_info *cinfo;
 	struct idr *idr;
-	struct scmi_xfers_info *minfo;
 
 	/* Transmit channel is first entry i.e. index 0 */
 	idx = tx ? 0 : 1;
 	idr = tx ? &info->tx_idr : &info->rx_idr;
-	minfo = tx ? &info->tx_minfo : &info->rx_minfo;
 
 	/* check if already allocated, used for multiple device per protocol */
 	cinfo = idr_find(idr, prot_id);
@@ -777,8 +775,7 @@ static int scmi_chan_setup(struct scmi_info *info, struct device *dev,
 
 	cinfo->dev = dev;
 
-	ret = info->desc->ops->chan_setup(cinfo, info->dev, tx,
-					  &minfo->max_msg);
+	ret = info->desc->ops->chan_setup(cinfo, info->dev, tx);
 	if (ret)
 		return ret;
 
@@ -1024,6 +1021,9 @@ static const struct of_device_id scmi_of_match[] = {
 #ifdef CONFIG_MAILBOX
 	{ .compatible = "arm,scmi", .data = &scmi_mailbox_desc },
 #endif
+#ifdef CONFIG_VIRTIO_SCMI
+	{ .compatible = "arm,scmi-virtio", .data = &scmi_virtio_desc},
+ #endif
 	{ /* Sentinel */ },
 };
 
@@ -1041,7 +1041,13 @@ static struct platform_driver scmi_driver = {
 
 static int __init scmi_driver_init(void)
 {
+	int ret;
+
 	scmi_bus_init();
+
+	ret = virtio_scmi_init();
+	if (ret)
+		return ret;
 
 	scmi_clock_register();
 	scmi_perf_register();
@@ -1064,7 +1070,7 @@ static void __exit scmi_driver_exit(void)
 	scmi_reset_unregister();
 	scmi_sensors_unregister();
 	scmi_system_unregister();
-
+	virtio_scmi_exit();
 	platform_driver_unregister(&scmi_driver);
 }
 module_exit(scmi_driver_exit);

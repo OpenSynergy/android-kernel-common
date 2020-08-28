@@ -70,7 +70,8 @@
  *
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+#define dev_fmt(fmt) "SCMI Notifications - " fmt
+#define pr_fmt(fmt) "SCMI Notifications - " fmt
 
 #include <linux/bitfield.h>
 #include <linux/bug.h>
@@ -93,16 +94,16 @@
 #include "notify.h"
 
 #define	SCMI_MAX_PROTO			256
-#define	SCMI_ALL_SRC_IDS		0xffffUL
 /*
  * Builds an unsigned 32bit key from the given input tuple to be used
  * as a key in hashtables.
  */
 #define MAKE_HASH_KEY(p, e, s)			\
-	((u32)(((p) << 24) | ((e) << 16) | ((s) & SCMI_ALL_SRC_IDS)))
+	(FIELD_PREP(PROTO_ID_MASK, (p)) |	\
+	   FIELD_PREP(EVT_ID_MASK, (e)) |	\
+	   FIELD_PREP(SRC_ID_MASK, (s)))
 
-#define MAKE_ALL_SRCS_KEY(p, e)			\
-	MAKE_HASH_KEY((p), (e), SCMI_ALL_SRC_IDS)
+#define MAKE_ALL_SRCS_KEY(p, e)		MAKE_HASH_KEY((p), (e), SRC_ID_MASK)
 
 /*
  * Assumes that the stored obj includes its own hash-key in a field named 'key':
@@ -117,10 +118,13 @@
  */
 #define KEY_FIND(__ht, __obj, __k)				\
 ({								\
-	hash_for_each_possible((__ht), (__obj), hash, (__k))	\
-		if (likely((__obj)->key == (__k)))		\
+	typeof(__k) k_ = __k;					\
+	typeof(__obj) obj_;					\
+								\
+	hash_for_each_possible((__ht), obj_, hash, k_)		\
+		if (obj_->key == k_)				\
 			break;					\
-	__obj;							\
+	__obj = obj_;						\
 })
 
 #define PROTO_ID_MASK			GENMASK(31, 24)
@@ -138,26 +142,29 @@
  */
 #define SCMI_GET_PROTO(__ni, __pid)					\
 ({									\
-	struct scmi_registered_protocol_events_desc *__pd = NULL;	\
+	typeof(__ni) ni_ = __ni;					\
+	struct scmi_registered_events_desc *__pd = NULL;		\
 									\
-	if ((__ni) && (__pid) < SCMI_MAX_PROTO)				\
-		__pd = READ_ONCE((__ni)->registered_protocols[(__pid)]);\
+	if (ni_)							\
+		__pd = READ_ONCE(ni_->registered_protocols[(__pid)]);	\
 	__pd;								\
 })
 
 #define SCMI_GET_REVT_FROM_PD(__pd, __eid)				\
 ({									\
+	typeof(__pd) pd_ = __pd;					\
+	typeof(__eid) eid_ = __eid;					\
 	struct scmi_registered_event *__revt = NULL;			\
 									\
-	if ((__pd) && (__eid) < (__pd)->num_events)			\
-		__revt = READ_ONCE((__pd)->registered_events[(__eid)]);	\
+	if (pd_ && eid_ < pd_->num_events)				\
+		__revt = READ_ONCE(pd_->registered_events[eid_]);	\
 	__revt;								\
 })
 
 #define SCMI_GET_REVT(__ni, __pid, __eid)				\
 ({									\
-	struct scmi_registered_event *__revt = NULL;			\
-	struct scmi_registered_protocol_events_desc *__pd = NULL;	\
+	struct scmi_registered_event *__revt;				\
+	struct scmi_registered_events_desc *__pd;			\
 									\
 	__pd = SCMI_GET_PROTO((__ni), (__pid));				\
 	__revt = SCMI_GET_REVT_FROM_PD(__pd, (__eid));			\
@@ -165,17 +172,30 @@
 })
 
 /* A couple of utility macros to limit cruft when calling protocols' helpers */
-#define REVT_NOTIFY_ENABLE(revt, eid, sid)				       \
-	((revt)->proto->ops->set_notify_enabled((revt)->proto->ni->handle,     \
-						(eid), (sid), true))
-#define REVT_NOTIFY_DISABLE(revt, eid, sid)				       \
-	((revt)->proto->ops->set_notify_enabled((revt)->proto->ni->handle,     \
-						(eid), (sid), false))
-#define REVT_FILL_REPORT(revt, ...)					       \
-	((revt)->proto->ops->fill_custom_report((revt)->proto->ni->handle,     \
-						__VA_ARGS__))
+#define REVT_NOTIFY_SET_STATUS(revt, eid, sid, state)		\
+({								\
+	typeof(revt) r = revt;					\
+	r->proto->ops->set_notify_enabled(r->proto->ni->handle,	\
+					(eid), (sid), (state));	\
+})
 
-struct scmi_registered_protocol_events_desc;
+#define REVT_NOTIFY_ENABLE(revt, eid, sid)			\
+	REVT_NOTIFY_SET_STATUS((revt), (eid), (sid), true)
+
+#define REVT_NOTIFY_DISABLE(revt, eid, sid)			\
+	REVT_NOTIFY_SET_STATUS((revt), (eid), (sid), false)
+
+#define REVT_FILL_REPORT(revt, ...)				\
+({								\
+	typeof(revt) r = revt;					\
+	r->proto->ops->fill_custom_report(r->proto->ni->handle,	\
+					  __VA_ARGS__);		\
+})
+
+#define SCMI_PENDING_HASH_SZ		4
+#define SCMI_REGISTERED_HASH_SZ		6
+
+struct scmi_registered_events_desc;
 
 /**
  * struct scmi_notify_instance  - Represents an instance of the notification
@@ -203,8 +223,8 @@ struct scmi_notify_instance {
 	struct workqueue_struct				*notify_wq;
 
 	struct mutex					pending_mtx;
-	struct scmi_registered_protocol_events_desc	**registered_protocols;
-	DECLARE_HASHTABLE(pending_events_handlers, 8);
+	struct scmi_registered_events_desc	**registered_protocols;
+	DECLARE_HASHTABLE(pending_events_handlers, SCMI_PENDING_HASH_SZ);
 };
 
 /**
@@ -244,7 +264,7 @@ struct scmi_event_header {
 struct scmi_registered_event;
 
 /**
- * struct scmi_registered_protocol_events_desc  - Protocol Specific information
+ * struct scmi_registered_events_desc  - Protocol Specific information
  * @id: Protocol ID
  * @ops: Protocol specific and event-related operations
  * @equeue: The embedded per-protocol events_queue
@@ -270,7 +290,7 @@ struct scmi_registered_event;
  * removed or modified since protocols do not unregister ever, so that, once
  * we safely grab a NON-NULL reference from the array we can keep it and use it.
  */
-struct scmi_registered_protocol_events_desc {
+struct scmi_registered_events_desc {
 	u8					id;
 	const struct scmi_event_ops	        *ops;
 	struct events_queue			equeue;
@@ -281,7 +301,7 @@ struct scmi_registered_protocol_events_desc {
 	int					num_events;
 	struct scmi_registered_event		**registered_events;
 	struct mutex				registered_mtx;
-	DECLARE_HASHTABLE(registered_events_handlers, 8);
+	DECLARE_HASHTABLE(registered_events_handlers, SCMI_REGISTERED_HASH_SZ);
 };
 
 /**
@@ -305,7 +325,7 @@ struct scmi_registered_protocol_events_desc {
  * safely grab a NON-NULL reference from the table we can keep it and use it.
  */
 struct scmi_registered_event {
-	struct scmi_registered_protocol_events_desc	*proto;
+	struct scmi_registered_events_desc	       *proto;
 	const struct scmi_event				*evt;
 	void						*report;
 	u32						num_sources;
@@ -340,7 +360,7 @@ struct scmi_event_handler {
 	bool				enabled;
 };
 
-#define IS_HNDL_PENDING(hndl)	((hndl)->r_evt == NULL)
+#define IS_HNDL_PENDING(hndl)	(!(hndl)->r_evt)
 
 static struct scmi_event_handler *
 scmi_get_active_handler(struct scmi_notify_instance *ni, u32 evt_key);
@@ -365,7 +385,7 @@ scmi_lookup_and_call_event_chain(struct scmi_notify_instance *ni,
 
 	/* Here ensure the event handler cannot vanish while using it */
 	hndl = scmi_get_active_handler(ni, evt_key);
-	if (IS_ERR_OR_NULL(hndl))
+	if (!hndl)
 		return;
 
 	ret = blocking_notifier_call_chain(&hndl->chain,
@@ -393,7 +413,7 @@ scmi_lookup_and_call_event_chain(struct scmi_notify_instance *ni,
  */
 static inline struct scmi_registered_event *
 scmi_process_event_header(struct events_queue *eq,
-			  struct scmi_registered_protocol_events_desc *pd)
+			  struct scmi_registered_events_desc *pd)
 {
 	unsigned int outs;
 	struct scmi_registered_event *r_evt;
@@ -403,7 +423,7 @@ scmi_process_event_header(struct events_queue *eq,
 	if (!outs)
 		return NULL;
 	if (outs != sizeof(struct scmi_event_header)) {
-		pr_err("SCMI Notifications: corrupted EVT header. Flush.\n");
+		dev_err(pd->ni->handle->dev, "corrupted EVT header. Flush.\n");
 		kfifo_reset_out(&eq->kfifo);
 		return NULL;
 	}
@@ -430,7 +450,7 @@ scmi_process_event_header(struct events_queue *eq,
  */
 static inline bool
 scmi_process_event_payload(struct events_queue *eq,
-			   struct scmi_registered_protocol_events_desc *pd,
+			   struct scmi_registered_events_desc *pd,
 			   struct scmi_registered_event *r_evt)
 {
 	u32 src_id, key;
@@ -438,21 +458,22 @@ scmi_process_event_payload(struct events_queue *eq,
 	void *report = NULL;
 
 	outs = kfifo_out(&eq->kfifo, pd->eh->payld, pd->eh->payld_sz);
-	if (unlikely(!outs))
+	if (!outs)
 		return false;
 
 	/* Any in-flight event has now been officially processed */
 	pd->in_flight = NULL;
 
-	if (unlikely(outs != pd->eh->payld_sz)) {
-		pr_err("SCMI Notifications: corrupted EVT Payload. Flush.\n");
+	if (outs != pd->eh->payld_sz) {
+		dev_err(pd->ni->handle->dev, "corrupted EVT Payload. Flush.\n");
 		kfifo_reset_out(&eq->kfifo);
 		return false;
 	}
 
 	if (IS_ERR(r_evt)) {
-		pr_warn("SCMI Notifications: SKIP UNKNOWN EVT - proto:%X  evt:%d\n",
-			pd->id, pd->eh->evt_id);
+		dev_warn(pd->ni->handle->dev,
+			 "SKIP UNKNOWN EVT - proto:%X  evt:%d\n",
+			 pd->id, pd->eh->evt_id);
 		return true;
 	}
 
@@ -460,8 +481,9 @@ scmi_process_event_payload(struct events_queue *eq,
 				  pd->eh->payld, pd->eh->payld_sz,
 				  r_evt->report, &src_id);
 	if (!report) {
-		pr_err("SCMI Notifications: Report not available - proto:%X  evt:%d\n",
-		       pd->id, pd->eh->evt_id);
+		dev_err(pd->ni->handle->dev,
+			"report not available - proto:%X  evt:%d\n",
+			pd->id, pd->eh->evt_id);
 		return true;
 	}
 
@@ -504,11 +526,11 @@ scmi_process_event_payload(struct events_queue *eq,
 static void scmi_events_dispatcher(struct work_struct *work)
 {
 	struct events_queue *eq;
-	struct scmi_registered_protocol_events_desc *pd;
+	struct scmi_registered_events_desc *pd;
 	struct scmi_registered_event *r_evt;
 
 	eq = container_of(work, struct events_queue, notify_work);
-	pd = container_of(eq, struct scmi_registered_protocol_events_desc,
+	pd = container_of(eq, struct scmi_registered_events_desc,
 			  equeue);
 	/*
 	 * In order to keep the queue lock-less and the number of memcopies
@@ -518,7 +540,7 @@ static void scmi_events_dispatcher(struct work_struct *work)
 	 * worker, first the header, then the payload.
 	 */
 	do {
-		if (likely(!pd->in_flight)) {
+		if (!pd->in_flight) {
 			r_evt = scmi_process_event_header(eq, pd);
 			if (!r_evt)
 				break;
@@ -553,16 +575,16 @@ int scmi_notify(const struct scmi_handle *handle, u8 proto_id, u8 evt_id,
 
 	/* Ensure notify_priv is updated */
 	smp_rmb();
-	if (unlikely(!handle->notify_priv))
+	if (!handle->notify_priv)
 		return 0;
 	ni = handle->notify_priv;
 
 	r_evt = SCMI_GET_REVT(ni, proto_id, evt_id);
-	if (unlikely(!r_evt))
+	if (!r_evt)
 		return -EINVAL;
 
-	if (unlikely(len > r_evt->evt->max_payld_sz)) {
-		pr_err("SCMI Notifications: discard badly sized message\n");
+	if (len > r_evt->evt->max_payld_sz) {
+		dev_err(handle->dev, "discard badly sized message\n");
 		return -EINVAL;
 	}
 	if (kfifo_avail(&r_evt->proto->equeue.kfifo) < sizeof(eh) + len) {
@@ -575,8 +597,25 @@ int scmi_notify(const struct scmi_handle *handle, u8 proto_id, u8 evt_id,
 	eh.timestamp = ts;
 	eh.evt_id = evt_id;
 	eh.payld_sz = len;
+	/*
+	 * Header and payload are enqueued with two distinct kfifo_in() (so non
+	 * atomic), but this situation is handled properly on the consumer side
+	 * with in-flight events tracking.
+	 */
 	kfifo_in(&r_evt->proto->equeue.kfifo, &eh, sizeof(eh));
 	kfifo_in(&r_evt->proto->equeue.kfifo, buf, len);
+	/*
+	 * Don't care about return value here since we just want to ensure that
+	 * a work is queued all the times whenever some items have been pushed
+	 * on the kfifo:
+	 * - if work was already queued it will simply fail to queue a new one
+	 *   since it is not needed
+	 * - if work was not queued already it will be now, even in case work
+	 *   was in fact already running: this behavior avoids any possible race
+	 *   when this function pushes new items onto the kfifos after the
+	 *   related executing worker had already determined the kfifo to be
+	 *   empty and it was terminating.
+	 */
 	queue_work(r_evt->proto->equeue.wq,
 		   &r_evt->proto->equeue.notify_work);
 
@@ -641,19 +680,18 @@ static int scmi_initialize_events_queue(struct scmi_notify_instance *ni,
  *
  * Return: The allocated and registered descriptor on Success
  */
-static struct scmi_registered_protocol_events_desc *
-scmi_allocate_registered_protocol_desc(struct scmi_notify_instance *ni,
+static struct scmi_registered_events_desc *
+scmi_allocate_registered_events_desc(struct scmi_notify_instance *ni,
 				       u8 proto_id, size_t queue_sz,
 				       size_t eh_sz, int num_events,
 				       const struct scmi_event_ops *ops)
 {
 	int ret;
-	struct scmi_registered_protocol_events_desc *pd;
+	struct scmi_registered_events_desc *pd;
 
 	/* Ensure protocols are up to date */
 	smp_rmb();
-	if (ni->registered_protocols[proto_id]) {
-		WARN_ON(1);
+	if (WARN_ON(ni->registered_protocols[proto_id])) {
 		return ERR_PTR(-EINVAL);
 	}
 
@@ -713,15 +751,15 @@ int scmi_register_protocol_events(const struct scmi_handle *handle,
 {
 	int i;
 	size_t payld_sz = 0;
-	struct scmi_registered_protocol_events_desc *pd;
+	struct scmi_registered_events_desc *pd;
 	struct scmi_notify_instance *ni;
 
-	if (!ops || !evt || proto_id >= SCMI_MAX_PROTO)
+	if (!ops || !evt)
 		return -EINVAL;
 
 	/* Ensure notify_priv is updated */
 	smp_rmb();
-	if (unlikely(!handle->notify_priv))
+	if (!handle->notify_priv)
 		return -ENOMEM;
 	ni = handle->notify_priv;
 
@@ -731,9 +769,10 @@ int scmi_register_protocol_events(const struct scmi_handle *handle,
 
 	for (i = 0; i < num_events; i++)
 		payld_sz = max_t(size_t, payld_sz, evt[i].max_payld_sz);
-	pd = scmi_allocate_registered_protocol_desc(ni, proto_id, queue_sz,
-				    sizeof(struct scmi_event_header) + payld_sz,
-						    num_events, ops);
+	payld_sz += sizeof(struct scmi_event_header);
+
+	pd = scmi_allocate_registered_events_desc(ni, proto_id, queue_sz,
+				    		  payld_sz, num_events, ops);
 	if (IS_ERR(pd))
 		goto err;
 
@@ -762,7 +801,7 @@ int scmi_register_protocol_events(const struct scmi_handle *handle,
 		pd->registered_events[i] = r_evt;
 		/* Ensure events are updated */
 		smp_wmb();
-		pr_info("SCMI Notifications: registered event - %X\n",
+		dev_dbg(handle->dev, "registered event - %lX\n",
 			MAKE_ALL_SRCS_KEY(r_evt->proto->id, r_evt->evt->id));
 	}
 
@@ -782,8 +821,7 @@ int scmi_register_protocol_events(const struct scmi_handle *handle,
 	return 0;
 
 err:
-	pr_warn("SCMI Notifications - Proto:%X - Registration Failed !\n",
-		proto_id);
+	dev_warn(handle->dev, "Proto:%X - Registration Failed !\n", proto_id);
 	/* A failing protocol registration does not trigger full failure */
 	devres_close_group(ni->handle->dev, ni->gid);
 
@@ -812,7 +850,7 @@ scmi_allocate_event_handler(struct scmi_notify_instance *ni, u32 evt_key)
 
 	hndl = kzalloc(sizeof(*hndl), GFP_KERNEL);
 	if (!hndl)
-		return ERR_PTR(-ENOMEM);
+		return NULL;
 	hndl->key = evt_key;
 	BLOCKING_INIT_NOTIFIER_HEAD(&hndl->chain);
 	refcount_set(&hndl->users, 1);
@@ -844,9 +882,9 @@ static void scmi_free_event_handler(struct scmi_event_handler *hndl)
  * into the registered table.
  *
  * Context: Assumes to be called with @pending_mtx already acquired.
- * Return: True if bind was successful, False otherwise
+ * Return:  0 on Success
  */
-static inline bool scmi_bind_event_handler(struct scmi_notify_instance *ni,
+static inline int scmi_bind_event_handler(struct scmi_notify_instance *ni,
 					   struct scmi_event_handler *hndl)
 {
 	struct scmi_registered_event *r_evt;
@@ -854,8 +892,8 @@ static inline bool scmi_bind_event_handler(struct scmi_notify_instance *ni,
 
 	r_evt = SCMI_GET_REVT(ni, KEY_XTRACT_PROTO_ID(hndl->key),
 			      KEY_XTRACT_EVT_ID(hndl->key));
-	if (unlikely(!r_evt))
-		return false;
+	if (!r_evt)
+		return -EINVAL;
 
 	/* Remove from pending and insert into registered */
 	hash_del(&hndl->hash);
@@ -865,7 +903,7 @@ static inline bool scmi_bind_event_handler(struct scmi_notify_instance *ni,
 		 &hndl->hash, hndl->key);
 	mutex_unlock(&r_evt->proto->registered_mtx);
 
-	return true;
+	return 0;
 }
 
 /**
@@ -880,21 +918,21 @@ static inline bool scmi_bind_event_handler(struct scmi_notify_instance *ni,
  * the underlying event (which it is waiting for), belongs to an already
  * initialized and registered protocol.
  *
- * Return: True if pending registration is still valid, False otherwise.
+ * Return:  0 on Success
  */
-static inline bool scmi_valid_pending_handler(struct scmi_notify_instance *ni,
+static inline int scmi_valid_pending_handler(struct scmi_notify_instance *ni,
 					      struct scmi_event_handler *hndl)
 {
-	struct scmi_registered_protocol_events_desc *pd;
+	struct scmi_registered_events_desc *pd;
 
-	if (unlikely(!IS_HNDL_PENDING(hndl)))
-		return false;
+	if (!IS_HNDL_PENDING(hndl))
+		return -EINVAL;
 
 	pd = SCMI_GET_PROTO(ni, KEY_XTRACT_PROTO_ID(hndl->key));
 	if (pd)
-		return false;
+		return -EINVAL;
 
-	return true;
+	return 0;
 }
 
 /**
@@ -911,23 +949,24 @@ static inline bool scmi_valid_pending_handler(struct scmi_notify_instance *ni,
  * registration phase.
  *
  * Context: Assumes to be called with @pending_mtx acquired.
- * Return: True if a normal or a valid pending registration has been completed,
- *	   False otherwise
+ * Return:  0 on Success
  */
-static bool scmi_register_event_handler(struct scmi_notify_instance *ni,
+static int scmi_register_event_handler(struct scmi_notify_instance *ni,
 					struct scmi_event_handler *hndl)
 {
-	bool ret;
+	int ret;
 
 	ret = scmi_bind_event_handler(ni, hndl);
-	if (ret) {
-		pr_info("SCMI Notifications: registered NEW handler - key:%X\n",
+	if (!ret) {
+		dev_dbg(ni->handle->dev, "registered NEW handler - key:%X\n",
 			hndl->key);
 	} else {
 		ret = scmi_valid_pending_handler(ni, hndl);
-		if (ret)
-			pr_info("SCMI Notifications: registered PENDING handler - key:%X\n",
+		if (!ret)
+			dev_dbg(ni->handle->dev,
+				"registered PENDING handler - key:%X\n",
 				hndl->key);
+
 	}
 
 	return ret;
@@ -975,33 +1014,32 @@ __scmi_event_handler_get_ops(struct scmi_notify_instance *ni,
 
 	mutex_lock(&ni->pending_mtx);
 	/* Search registered events at first ... if possible at all */
-	if (likely(r_evt)) {
+	if (r_evt) {
 		mutex_lock(&r_evt->proto->registered_mtx);
 		hndl = KEY_FIND(r_evt->proto->registered_events_handlers,
 				hndl, evt_key);
-		if (likely(hndl))
+		if (hndl)
 			refcount_inc(&hndl->users);
 		mutex_unlock(&r_evt->proto->registered_mtx);
 	}
 
 	/* ...then amongst pending. */
-	if (unlikely(!hndl)) {
+	if (!hndl) {
 		hndl = KEY_FIND(ni->pending_events_handlers, hndl, evt_key);
-		if (likely(hndl))
+		if (hndl)
 			refcount_inc(&hndl->users);
 	}
 
 	/* Create if still not found and required */
 	if (!hndl && create) {
 		hndl = scmi_allocate_event_handler(ni, evt_key);
-		if (!IS_ERR_OR_NULL(hndl)) {
-			if (!scmi_register_event_handler(ni, hndl)) {
-				pr_info("SCMI Notifications: purging UNKNOWN handler - key:%X\n",
-					hndl->key);
-				/* this hndl can be only a pending one */
-				scmi_put_handler_unlocked(ni, hndl);
-				hndl = NULL;
-			}
+		if (hndl && scmi_register_event_handler(ni, hndl)) {
+			dev_dbg(ni->handle->dev,
+				"purging UNKNOWN handler - key:%X\n",
+				hndl->key);
+			/* this hndl can be only a pending one */
+			scmi_put_handler_unlocked(ni, hndl);
+			hndl = NULL;
 		}
 	}
 	mutex_unlock(&ni->pending_mtx);
@@ -1040,11 +1078,11 @@ scmi_get_active_handler(struct scmi_notify_instance *ni, u32 evt_key)
 
 	r_evt = SCMI_GET_REVT(ni, KEY_XTRACT_PROTO_ID(evt_key),
 			      KEY_XTRACT_EVT_ID(evt_key));
-	if (likely(r_evt)) {
+	if (r_evt) {
 		mutex_lock(&r_evt->proto->registered_mtx);
 		hndl = KEY_FIND(r_evt->proto->registered_events_handlers,
 				hndl, evt_key);
-		if (likely(hndl))
+		if (hndl)
 			refcount_inc(&hndl->users);
 		mutex_unlock(&r_evt->proto->registered_mtx);
 	}
@@ -1061,40 +1099,39 @@ scmi_get_active_handler(struct scmi_notify_instance *ni, u32 evt_key)
  * Takes care of proper refcounting while performing enable/disable: handles
  * the special case of ALL sources requests by itself.
  *
- * Return: True when the required action has been successfully executed
+ * Return:  0 on Success
  */
-static inline bool __scmi_enable_evt(struct scmi_registered_event *r_evt,
+static inline int __scmi_enable_evt(struct scmi_registered_event *r_evt,
 				     u32 src_id, bool enable)
 {
-	int ret = 0;
+	int retvals = 0;
 	u32 num_sources;
 	refcount_t *sid;
 
-	if (src_id == SCMI_ALL_SRC_IDS) {
+	if (src_id == SRC_ID_MASK) {
 		src_id = 0;
 		num_sources = r_evt->num_sources;
 	} else if (src_id < r_evt->num_sources) {
 		num_sources = 1;
 	} else {
-		return ret;
+		return -EINVAL;
 	}
 
 	mutex_lock(&r_evt->sources_mtx);
 	if (enable) {
 		for (; num_sources; src_id++, num_sources--) {
-			bool r;
+			int ret = 0;
 
 			sid = &r_evt->sources[src_id];
 			if (refcount_read(sid) == 0) {
-				r = REVT_NOTIFY_ENABLE(r_evt,
+				ret = REVT_NOTIFY_ENABLE(r_evt,
 						       r_evt->evt->id, src_id);
-				if (r)
+				if (!ret)
 					refcount_set(sid, 1);
 			} else {
 				refcount_inc(sid);
-				r = true;
 			}
-			ret += r;
+			retvals += !ret;
 		}
 	} else {
 		for (; num_sources; src_id++, num_sources--) {
@@ -1103,29 +1140,39 @@ static inline bool __scmi_enable_evt(struct scmi_registered_event *r_evt,
 				REVT_NOTIFY_DISABLE(r_evt,
 						    r_evt->evt->id, src_id);
 		}
-		ret = 1;
+		retvals = 1;
 	}
 	mutex_unlock(&r_evt->sources_mtx);
+
+	return retvals ? 0 : -EINVAL;
+}
+
+static int scmi_enable_events(struct scmi_event_handler *hndl)
+{
+	int ret = 0;
+
+	if (!hndl->enabled) {
+		ret = __scmi_enable_evt(hndl->r_evt,
+					KEY_XTRACT_SRC_ID(hndl->key), true);
+		if (!ret)
+			hndl->enabled = true;
+	}
 
 	return ret;
 }
 
-static bool scmi_enable_events(struct scmi_event_handler *hndl)
+static int scmi_disable_events(struct scmi_event_handler *hndl)
 {
-	if (!hndl->enabled)
-		hndl->enabled = __scmi_enable_evt(hndl->r_evt,
-						  KEY_XTRACT_SRC_ID(hndl->key),
-						  true);
-	return hndl->enabled;
-}
+	int ret = 0;
 
-static bool scmi_disable_events(struct scmi_event_handler *hndl)
-{
-	if (hndl->enabled)
-		hndl->enabled = !__scmi_enable_evt(hndl->r_evt,
-						   KEY_XTRACT_SRC_ID(hndl->key),
-						   false);
-	return !hndl->enabled;
+	if (hndl->enabled) {
+		ret = __scmi_enable_evt(hndl->r_evt,
+					KEY_XTRACT_SRC_ID(hndl->key), false);
+		if (!ret)
+			hndl->enabled = false;
+	}
+
+	return ret;
 }
 
 /**
@@ -1145,7 +1192,7 @@ scmi_put_handler_unlocked(struct scmi_notify_instance *ni,
 				struct scmi_event_handler *hndl)
 {
 	if (refcount_dec_and_test(&hndl->users)) {
-		if (likely(!IS_HNDL_PENDING(hndl)))
+		if (!IS_HNDL_PENDING(hndl))
 			scmi_disable_events(hndl);
 		scmi_free_event_handler(hndl);
 	}
@@ -1181,17 +1228,17 @@ static void scmi_put_active_handler(struct scmi_notify_instance *ni,
  * scmi_event_handler_enable_events()  - Enable events associated to an handler
  * @hndl: The Event handler to act upon
  *
- * Return: True on success
+ * Return:  0 on Success
  */
-static bool scmi_event_handler_enable_events(struct scmi_event_handler *hndl)
+static int scmi_event_handler_enable_events(struct scmi_event_handler *hndl)
 {
-	if (!scmi_enable_events(hndl)) {
-		pr_err("SCMI Notifications: Failed to ENABLE events for key:%X !\n",
+	if (scmi_enable_events(hndl)) {
+		pr_err("Failed to ENABLE events for key:%X !\n",
 		       hndl->key);
-		return false;
+		return -EINVAL;
 	}
 
-	return true;
+	return 0;
 }
 
 /**
@@ -1238,24 +1285,23 @@ static int scmi_register_notifier(const struct scmi_handle *handle,
 
 	/* Ensure notify_priv is updated */
 	smp_rmb();
-	if (unlikely(!handle->notify_priv))
+	if (!handle->notify_priv)
 		return -ENODEV;
 	ni = handle->notify_priv;
 
 	evt_key = MAKE_HASH_KEY(proto_id, evt_id,
-				src_id ? *src_id : SCMI_ALL_SRC_IDS);
+				src_id ? *src_id : SRC_ID_MASK);
 	hndl = scmi_get_or_create_handler(ni, evt_key);
-	if (IS_ERR_OR_NULL(hndl))
-		return PTR_ERR(hndl);
+	if (!hndl)
+		return -EINVAL;
 
 	blocking_notifier_chain_register(&hndl->chain, nb);
 
 	/* Enable events for not pending handlers */
-	if (likely(!IS_HNDL_PENDING(hndl))) {
-		if (!scmi_event_handler_enable_events(hndl)) {
+	if (!IS_HNDL_PENDING(hndl)) {
+		ret = scmi_event_handler_enable_events(hndl);
+		if (ret)
 			scmi_put_handler(ni, hndl);
-			ret = -EINVAL;
-		}
 	}
 
 	return ret;
@@ -1287,14 +1333,14 @@ static int scmi_unregister_notifier(const struct scmi_handle *handle,
 
 	/* Ensure notify_priv is updated */
 	smp_rmb();
-	if (unlikely(!handle->notify_priv))
+	if (!handle->notify_priv)
 		return -ENODEV;
 	ni = handle->notify_priv;
 
 	evt_key = MAKE_HASH_KEY(proto_id, evt_id,
-				src_id ? *src_id : SCMI_ALL_SRC_IDS);
+				src_id ? *src_id : SRC_ID_MASK);
 	hndl = scmi_get_handler(ni, evt_key);
-	if (IS_ERR_OR_NULL(hndl))
+	if (!hndl)
 		return -EINVAL;
 
 	blocking_notifier_chain_unregister(&hndl->chain, nb);
@@ -1335,11 +1381,12 @@ static void scmi_protocols_late_init(struct work_struct *work)
 
 	mutex_lock(&ni->pending_mtx);
 	hash_for_each_safe(ni->pending_events_handlers, bkt, tmp, hndl, hash) {
-		bool ret;
+		int ret;
 
 		ret = scmi_bind_event_handler(ni, hndl);
-		if (ret) {
-			pr_info("SCMI Notifications: finalized PENDING handler - key:%X\n",
+		if (!ret) {
+			dev_dbg(ni->handle->dev,
+				"finalized PENDING handler - key:%X\n",
 				hndl->key);
 			ret = scmi_event_handler_enable_events(hndl);
 			if (ret) {
@@ -1434,14 +1481,14 @@ int scmi_notification_init(struct scmi_handle *handle)
 	/* Ensure handle is up to date */
 	smp_wmb();
 
-	pr_info("SCMI Notifications Core Enabled.\n");
+	dev_info(handle->dev, "Core Enabled.\n");
 
 	devres_close_group(handle->dev, ni->gid);
 
 	return 0;
 
 err:
-	pr_warn("SCMI Notifications - Initialization Failed.\n");
+	dev_warn(handle->dev, "Initialization Failed.\n");
 	devres_release_group(handle->dev, NULL);
 	return -ENOMEM;
 }
@@ -1456,7 +1503,7 @@ void scmi_notification_exit(struct scmi_handle *handle)
 
 	/* Ensure notify_priv is updated */
 	smp_rmb();
-	if (unlikely(!handle->notify_priv))
+	if (!handle->notify_priv)
 		return;
 	ni = handle->notify_priv;
 

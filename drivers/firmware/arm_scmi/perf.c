@@ -5,6 +5,8 @@
  * Copyright (C) 2018 ARM Ltd.
  */
 
+#define pr_fmt(fmt) "SCMI Notifications PERF - " fmt
+
 #include <linux/bits.h>
 #include <linux/of.h>
 #include <linux/io.h>
@@ -767,14 +769,15 @@ static int scmi_perf_set_notify_enabled(const struct scmi_handle *handle,
 {
 	int ret, cmd_id;
 
-	cmd_id = MAP_EVT_TO_ENABLE_CMD(evt_id, evt_2_cmd);
-	if (cmd_id < 0)
-		return false;
+	if (evt_id >= ARRAY_SIZE(evt_2_cmd))
+		return -EINVAL;
+
+	cmd_id = evt_2_cmd[evt_id];
 
 	ret = scmi_perf_level_limits_notify(handle, src_id, cmd_id, enable);
 	if (ret)
-		pr_warn("SCMI Notifications - Proto:%X - FAIL_ENABLED - evt[%X] dom[%d] - ret:%d\n",
-				SCMI_PROTOCOL_PERF, evt_id, src_id, ret);
+		pr_debug("FAIL_ENABLED - evt[%X] dom[%d] - ret:%d\n",
+			 evt_id, src_id, ret);
 
 	return ret;
 }
@@ -878,7 +881,7 @@ static int scmi_perf_protocol_init(struct scmi_handle *handle)
 	}
 
 	scmi_register_protocol_events(handle,
-				      SCMI_PROTOCOL_PERF, PAGE_SIZE,
+				      SCMI_PROTOCOL_PERF, SCMI_PROTO_QUEUE_SZ,
 				      &perf_event_ops, perf_events,
 				      ARRAY_SIZE(perf_events),
 				      pinfo->num_domains);

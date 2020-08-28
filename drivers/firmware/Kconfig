@@ -6,32 +6,20 @@
 
 menu "Firmware Drivers"
 
-config ARM_SCMI_MAILBOX_TRANSPORT
-	bool "Mailbox transport for SCMI message protocol"
-	depends on MAILBOX
+config VIRTIO_SCMI
+	bool "Virtio transport for SCMI"
 	default n
+	depends on VIRTIO
 	help
-	  This enables support for the SCMI message protocol MAILBOX
-	  transport.
+	  This enables the virtio based transport for SCMI.
 
-	  The other option for SCMI message protocol is
-	  ARM_SCMI_VIRTIO_TRANSPORT.
-
-config ARM_SCMI_VIRTIO_TRANSPORT
-	bool "VirtIO transport for SCMI message protocol"
-	depends on VIRTIO_MMIO && !ARM_SCMI_MAILBOX_TRANSPORT
-	default n
-	help
-	  This enables support for the SCMI message protocol VirtIO
-	  transport.
-
-	  The other option for SCMI message protocol is
-	  ARM_SCMI_MAILBOX_TRANSPORT.
+	  If you want to use the ARM SCMI protocol between the virtio guest and
+	  a host providing a virtio SCMI device, answer Y.
 
 config ARM_SCMI_PROTOCOL
 	tristate "ARM System Control and Management Interface (SCMI) Message Protocol"
 	depends on ARM || ARM64 || COMPILE_TEST
-	depends on ARM_SCMI_HAVE_SHMEM
+	depends on ARM_SCMI_HAVE_SHMEM || VIRTIO_SCMI
 	help
 	  ARM System Control and Management Interface (SCMI) protocol is a
 	  set of operating system-independent software interfaces that are

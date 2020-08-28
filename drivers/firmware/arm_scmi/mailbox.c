@@ -53,7 +53,7 @@ static bool mailbox_chan_available(struct device *dev, int idx)
 }
 
 static int mailbox_chan_setup(struct scmi_chan_info *cinfo, struct device *dev,
-			      bool tx, int *max_msg)
+			      bool tx)
 {
 	const char *desc = tx ? "Tx" : "Rx";
 	struct device *cdev = cinfo->dev;
@@ -101,8 +101,6 @@ static int mailbox_chan_setup(struct scmi_chan_info *cinfo, struct device *dev,
 
 	cinfo->transport_info = smbox;
 	smbox->cinfo = cinfo;
-
-	*max_msg = 20; /* Limited by MBOX_TX_QUEUE_LEN */
 
 	return 0;
 }
@@ -198,5 +196,6 @@ static const struct scmi_transport_ops scmi_mailbox_ops = {
 const struct scmi_desc scmi_mailbox_desc = {
 	.ops = &scmi_mailbox_ops,
 	.max_rx_timeout_ms = 30, /* We may increase this if required */
+	.max_msg = 20,
 	.max_msg_size = 128,
 };

@@ -167,6 +167,17 @@ int scmi_base_protocol_init(struct scmi_handle *h);
 int __init scmi_bus_init(void);
 void __exit scmi_bus_exit(void);
 
+#ifdef CONFIG_VIRTIO_SCMI
+int __init virtio_scmi_init(void);
+void __exit virtio_scmi_exit(void);
+#else
+static inline int __init virtio_scmi_init(void)
+{
+	return 0;
+}
+#define virtio_scmi_exit() do { } while (0)
+#endif
+
 #define DECLARE_SCMI_REGISTER_UNREGISTER(func)		\
 	int __init scmi_##func##_register(void);	\
 	void __exit scmi_##func##_unregister(void)
@@ -225,8 +236,7 @@ struct scmi_chan_info {
 struct scmi_transport_ops {
 	int (*link_supplier)(struct device *dev);
 	bool (*chan_available)(struct device *dev, int idx);
-	int (*chan_setup)(struct scmi_chan_info *cinfo, struct device *dev,
-			  bool tx, int *max_msg);
+	int (*chan_setup)(struct scmi_chan_info *cinfo, struct device *dev,bool tx);
 	int (*chan_free)(int id, void *p, void *data);
 	int (*get_max_msg)(bool tx, struct scmi_chan_info *base_cinfo,
 			   int *max_msg);
@@ -258,17 +268,20 @@ struct scmi_transport_ops {
 struct scmi_desc {
 	const struct scmi_transport_ops *ops;
 	int max_rx_timeout_ms;
+	int max_msg;
 	int max_msg_size;
 };
 
 #ifdef CONFIG_MAILBOX
 extern const struct scmi_desc scmi_mailbox_desc;
 #endif
+#ifdef CONFIG_VIRTIO_SCMI
+extern const struct scmi_desc scmi_virtio_desc;
+#endif
 
 int scmi_set_transport_info(struct device *dev, void *transport_info);
 void *scmi_get_transport_info(struct device *dev);
-void scmi_rx_callback(struct scmi_chan_info *cinfo, u32 msg_hdr,
-		      struct scmi_xfer *xfer);
+void scmi_rx_callback(struct scmi_chan_info *cinfo, u32 msg_hdr, struct scmi_xfer *xfer);
 void scmi_free_channel(struct scmi_chan_info *cinfo, struct idr *idr, int id);
 
 /* shmem related declarations */

@@ -9,22 +9,11 @@
 #ifndef _SCMI_NOTIFY_H
 #define _SCMI_NOTIFY_H
 
-#include <linux/bug.h>
 #include <linux/device.h>
 #include <linux/ktime.h>
 #include <linux/types.h>
 
 #define SCMI_PROTO_QUEUE_SZ	4096
-#define MAP_EVT_TO_ENABLE_CMD(id, map)			\
-({							\
-	int ret = -1;					\
-							\
-	if (likely((id) < ARRAY_SIZE((map))))		\
-		ret = (map)[(id)];			\
-	else						\
-		WARN(1, "UN-KNOWN evt_id:%d\n", (id));	\
-	ret;						\
-})
 
 /**
  * struct scmi_event  - Describes an event to be supported
@@ -47,8 +36,7 @@ struct scmi_event {
  *				     core.
  * @set_notify_enabled: Enable/disable the required evt_id/src_id notifications
  *			using the proper custom protocol commands.
- *			Return true if at least one the required src_id
- *			has been successfully enabled/disabled
+ *			Return 0 on success
  * @fill_custom_report: fills a custom event report from the provided
  *			event message payld identifying the event
  *			specific src_id.

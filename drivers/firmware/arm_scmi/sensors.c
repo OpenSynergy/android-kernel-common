@@ -854,8 +854,8 @@ static int scmi_sensor_set_notify_enabled(const struct scmi_handle *handle,
 	}
 
 	if (ret)
-		pr_warn("SCMI Notifications - Proto:%X - FAIL_ENABLED - evt[%X] dom[%d] - ret:%d\n",
-			SCMI_PROTOCOL_SENSOR, evt_id, src_id, ret);
+		pr_debug("FAIL_ENABLED - evt[%X] dom[%d] - ret:%d\n",
+			 evt_id, src_id, ret);
 
 	return ret;
 }
@@ -972,7 +972,7 @@ static int scmi_sensors_protocol_init(struct scmi_handle *handle)
 		return ret;
 
 	scmi_register_protocol_events(handle,
-				      SCMI_PROTOCOL_SENSOR, PAGE_SIZE,
+				      SCMI_PROTOCOL_SENSOR, SCMI_PROTO_QUEUE_SZ,
 				      &sensor_event_ops, sensor_events,
 				      ARRAY_SIZE(sensor_events),
 				      sinfo->num_sensors);
