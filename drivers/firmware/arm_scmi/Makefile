@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0-only
 scmi-bus-y = bus.o
 scmi-driver-y = driver.o notify.o
-scmi-transport-$(CONFIG_ARM_SCMI_MAILBOX_TRANSPORT) = mailbox.o shmem.o
-scmi-transport-$(CONFIG_ARM_SCMI_VIRTIO_TRANSPORT) = virtio.o
+scmi-transport-$(CONFIG_ARM_SCMI_HAVE_SHMEM) = shmem.o
+scmi-transport-$(CONFIG_MAILBOX) += mailbox.o
 scmi-protocols-y = base.o clock.o perf.o power.o reset.o sensors.o system.o
 scmi-module-objs := $(scmi-bus-y) $(scmi-driver-y) $(scmi-protocols-y) \
 		    $(scmi-transport-y)

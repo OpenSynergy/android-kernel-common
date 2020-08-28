@@ -31,7 +31,7 @@ config ARM_SCMI_VIRTIO_TRANSPORT
 config ARM_SCMI_PROTOCOL
 	tristate "ARM System Control and Management Interface (SCMI) Message Protocol"
 	depends on ARM || ARM64 || COMPILE_TEST
-	depends on ARM_SCMI_VIRTIO_TRANSPORT || ARM_SCMI_MAILBOX_TRANSPORT
+	depends on ARM_SCMI_HAVE_SHMEM
 	help
 	  ARM System Control and Management Interface (SCMI) protocol is a
 	  set of operating system-independent software interfaces that are
@@ -48,6 +48,13 @@ config ARM_SCMI_PROTOCOL
 
 	  This protocol library provides interface for all the client drivers
 	  making use of the features offered by the SCMI.
+
+config ARM_SCMI_HAVE_SHMEM
+	bool
+	default n
+	help
+	  This declares whether a shared memory based transport for SCMI is
+	  available.
 
 config ARM_SCMI_POWER_DOMAIN
 	tristate "SCMI power domain driver"
