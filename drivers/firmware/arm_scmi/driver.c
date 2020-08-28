@@ -667,12 +667,21 @@ static int __scmi_xfer_info_init(struct scmi_info *sinfo,
 
 	/* Pre-initialize the buffer pointer to pre-allocated buffers */
 	for (i = 0, xfer = info->xfer_block; i < info->max_msg; i++, xfer++) {
-		xfer->rx.buf = devm_kcalloc(dev, sizeof(u8), desc->max_msg_size,
-					    GFP_KERNEL);
-		if (!xfer->rx.buf)
-			return -ENOMEM;
+		if (desc->ops->xfer_init_buffers) {
+			int ret = desc->ops->xfer_init_buffers(
+				base_cinfo, xfer, desc->max_msg_size);
 
-		xfer->tx.buf = xfer->rx.buf;
+			if (ret)
+				return ret;
+		} else {
+			xfer->rx.buf = devm_kcalloc(dev, sizeof(u8),
+						    desc->max_msg_size,
+						    GFP_KERNEL);
+			if (!xfer->rx.buf)
+				return -ENOMEM;
+
+			xfer->tx.buf = xfer->rx.buf;
+		}
 		init_completion(&xfer->done);
 	}
 
