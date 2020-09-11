@@ -166,6 +166,8 @@ struct scmi_sensor_axis_info {
 	s8 scale;
 	char name[SCMI_MAX_STR_SIZE];
 	bool extended_attrs;
+	u32 resolution;
+	s8 exponent;
 	struct scmi_extended_attrs attrs;
 };
 
@@ -208,6 +210,8 @@ struct scmi_sensor_info {
 	char name[SCMI_MAX_STR_SIZE];
 	bool extended_scalar_attrs;
 	u32 sensor_power;
+	u32 resolution;
+	s8 exponent;
 	struct scmi_extended_attrs scalar_attrs;
 };
 

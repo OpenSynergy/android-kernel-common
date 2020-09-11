@@ -47,6 +47,10 @@ struct scmi_msg_resp_sensor_attributes {
 #define SENSOR_AXIS_NUMBER(x)		(((x) >> 16) & 0x3f)
 #define SUPPORTS_AXIS(x)		((x) & BIT(8))
 
+/* v3 resolution macros */
+#define SENSOR_RES(x)			((x) & 0x3ffffff)
+#define SENSOR_RES_EXP(x)		(((x) >> 27) & 0x1f)
+
 struct scmi_extended_attrs_le {
 	__le32 min_range_low;
 	__le32 min_range_high;
@@ -73,6 +77,7 @@ struct scmi_msg_resp_sensor_description {
 		u8 name[SCMI_MAX_STR_SIZE];
 		/* only for version > 2.0 */
 		__le32 power;
+		__le32 resolution;
 		struct scmi_extended_attrs_le scalar_attrs;
 	} desc[0];
 };
@@ -83,7 +88,7 @@ struct scmi_msg_resp_sensor_description {
 
 #define SCMI_MSG_RESP_SENS_DESCR_MAX_SZ					\
 	(sizeof(struct scmi_sensor_descriptor) -			\
-	  sizeof(__le32) - sizeof(struct scmi_extended_attrs_le))
+	  sizeof(__le32) * 2 - sizeof(struct scmi_extended_attrs_le))
 
 struct scmi_msg_sensor_axis_description_get {
 	__le32 id;
@@ -99,13 +104,14 @@ struct scmi_msg_resp_sensor_axis_description {
 		__le32 attributes_low;
 		__le32 attributes_high;
 		u8 name[SCMI_MAX_STR_SIZE];
+		__le32 resolution;
 		struct scmi_extended_attrs_le attrs;
 	} desc[0];
 };
 
 #define SCMI_MSG_RESP_AXIS_DESCR_MAX_SZ					\
 		(sizeof(struct scmi_axis_descriptor) -			\
-		 sizeof(struct scmi_extended_attrs_le))
+		 sizeof(__le32) - sizeof(struct scmi_extended_attrs_le))
 
 struct scmi_msg_sensor_list_update_intervals {
 	__le32 id;
@@ -381,6 +387,14 @@ static int scmi_sensor_axis_description(const struct scmi_handle *handle,
 			strlcpy(a->name, adesc->name, SCMI_MAX_STR_SIZE);
 
 			if (a->extended_attrs) {
+				unsigned int ares =
+					le32_to_cpu(adesc->resolution);
+
+				a->resolution = SENSOR_RES(ares);
+				a->exponent =
+					S8_EXT(SENSOR_RES_EXP(ares));
+				dsize += sizeof(adesc->resolution);
+
 				scmi_parse_ext_attrs(&a->attrs, &adesc->attrs);
 				dsize += sizeof(adesc->attrs);
 			}
@@ -494,6 +508,14 @@ static int scmi_sensor_description_get(const struct scmi_handle *handle,
 				s->sensor_power = le32_to_cpu(sdesc->power);
 				dsize += sizeof(sdesc->power);
 				if (s->num_axis == 1) {
+					unsigned int sres =
+						le32_to_cpu(sdesc->resolution);
+
+					s->resolution = SENSOR_RES(sres);
+					s->exponent =
+						S8_EXT(SENSOR_RES_EXP(sres));
+					dsize += sizeof(sdesc->resolution);
+
 					scmi_parse_ext_attrs(&s->scalar_attrs,
 							&sdesc->scalar_attrs);
 					dsize += sizeof(sdesc->scalar_attrs);
