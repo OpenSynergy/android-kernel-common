@@ -507,7 +507,7 @@ static int scmi_sensor_description_get(const struct scmi_handle *handle,
 			if (s->extended_scalar_attrs) {
 				s->sensor_power = le32_to_cpu(sdesc->power);
 				dsize += sizeof(sdesc->power);
-				if (s->num_axis == 1) {
+				if (s->num_axis == 0) {
 					unsigned int sres =
 						le32_to_cpu(sdesc->resolution);
 
@@ -521,7 +521,7 @@ static int scmi_sensor_description_get(const struct scmi_handle *handle,
 					dsize += sizeof(sdesc->scalar_attrs);
 				}
 			}
-			if (s->num_axis > 1) {
+			if (s->num_axis > 0) {
 				ret = scmi_sensor_axis_description(handle, s);
 				if (ret)
 					goto out;
@@ -762,7 +762,8 @@ scmi_sensor_reading_get_timestamped(const struct scmi_handle *handle,
 	struct sensors_info *si = handle->sensor_priv;
 	struct scmi_sensor_info *s = si->sensors + sensor_id;
 
-	if (!count || !readings || count > s->num_axis)
+	if (!count || !readings ||
+	    (!s->num_axis && count > 1) || (s->num_axis && count > s->num_axis))
 		return -EINVAL;
 
 	ret = scmi_xfer_get_init(handle, SENSOR_READING_GET,
@@ -899,9 +900,9 @@ static void *scmi_sensor_fill_custom_report(const struct scmi_handle *handle,
 		 * The generated report r (@struct scmi_sensor_update_report)
 		 * was pre-allocated to contain up to SCMI_MAX_NUM_SENSOR_AXIS
 		 * readings: here it is filled with the effective @num_axis
-		 * readings defined for this sensor.
+		 * readings defined for this sensor or 1 for scalar sensors.
 		 */
-		r->readings_count = s->num_axis;
+		r->readings_count = s->num_axis ?: 1;
 		for (i = 0; i < r->readings_count; i++)
 			scmi_parse_sensor_readings(&r->readings[i],
 						   &p->readings[i]);
