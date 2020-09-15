@@ -387,6 +387,13 @@ int virtio_device_restore(struct virtio_device *dev)
 	struct virtio_driver *drv = drv_to_virtio(dev->dev.driver);
 	int ret;
 
+	/* Short path for stateful devices. Here we assume that if the device
+	 * does not have a freeze callback, its state was not changed when
+	 * suspended.
+	 */
+	if (drv && !drv->freeze)
+		goto on_config_enable;
+
 	/* We always start by resetting the device, in case a previous
 	 * driver messed it up. */
 	dev->config->reset(dev);
@@ -418,6 +425,7 @@ int virtio_device_restore(struct virtio_device *dev)
 	/* Finally, tell the device we're all set */
 	virtio_add_status(dev, VIRTIO_CONFIG_S_DRIVER_OK);
 
+on_config_enable:
 	virtio_config_enable(dev);
 
 	return 0;
