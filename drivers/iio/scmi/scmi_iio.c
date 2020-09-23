@@ -450,16 +450,60 @@ static ssize_t scmi_iio_get_sensor_max_range(struct device *dev,
 	return scnprintf(buf, PAGE_SIZE, "%lld\n", max_range);
 }
 
+static ssize_t scmi_iio_get_sensor_resolution(struct device *dev,
+					      struct device_attribute *attr,
+					      char *buf)
+{
+	struct scmi_iio_priv *sensor = iio_priv(dev_get_drvdata(dev));
+	bool scalar_sensor;
+	int len = 0;
+	int err = scmi_iio_check_valid_sensor(sensor);
+
+	if (err)
+		return err;
+
+	err = scmi_iio_is_scalar_sensor(sensor->sensor_info, &scalar_sensor);
+	if (err)
+		return err;
+
+	if (!scalar_sensor) {
+		// All the axes are supposed to have the same value for resolution
+		// and exponent. We are just using the values from the Axis 0 here.
+		if (sensor->sensor_info->axis[0].extended_attrs) {
+			u32 resolution =
+				sensor->sensor_info->axis[0].resolution;
+			s8 exponent = sensor->sensor_info->axis[0].exponent;
+			u32 multiplier = int_pow(10, abs(exponent));
+			if (exponent < 0) {
+				int vals[] = { resolution, multiplier };
+				len = iio_format_value(
+					buf, IIO_VAL_FRACTIONAL,
+					sizeof(vals) / sizeof(vals[0]), vals);
+			} else {
+				int vals[] = { resolution * multiplier };
+				len = iio_format_value(
+					buf, IIO_VAL_INT,
+					sizeof(vals) / sizeof(vals[0]), vals);
+			}
+		}
+	}
+
+	return len;
+}
+
 static IIO_DEV_ATTR_SAMP_FREQ_AVAIL(scmi_iio_sysfs_sampling_freq_avail);
 static IIO_DEVICE_ATTR(sensor_power, S_IRUGO, scmi_iio_get_sensor_power, NULL,
 		       0);
 static IIO_DEVICE_ATTR(sensor_max_range, S_IRUGO, scmi_iio_get_sensor_max_range,
 		       NULL, 0);
+static IIO_DEVICE_ATTR(sensor_resolution, S_IRUGO,
+		       scmi_iio_get_sensor_resolution, NULL, 0);
 
 static struct attribute *scmi_iio_attributes[] = {
 	&iio_dev_attr_sampling_frequency_available.dev_attr.attr,
 	&iio_dev_attr_sensor_power.dev_attr.attr,
 	&iio_dev_attr_sensor_max_range.dev_attr.attr,
+	&iio_dev_attr_sensor_resolution.dev_attr.attr,
 	NULL,
 };
 static const struct attribute_group scmi_iio_attribute_group = {
