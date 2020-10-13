@@ -272,7 +272,7 @@ struct scmi_registered_event;
  */
 struct scmi_registered_protocol_events_desc {
 	u8					id;
-	const struct scmi_protocol_event_ops	*ops;
+	const struct scmi_event_ops	        *ops;
 	struct events_queue			equeue;
 	struct scmi_notify_instance		*ni;
 	struct scmi_event_header		*eh;
@@ -645,7 +645,7 @@ static struct scmi_registered_protocol_events_desc *
 scmi_allocate_registered_protocol_desc(struct scmi_notify_instance *ni,
 				       u8 proto_id, size_t queue_sz,
 				       size_t eh_sz, int num_events,
-				const struct scmi_protocol_event_ops *ops)
+				       const struct scmi_event_ops *ops)
 {
 	int ret;
 	struct scmi_registered_protocol_events_desc *pd;
@@ -707,7 +707,7 @@ scmi_allocate_registered_protocol_desc(struct scmi_notify_instance *ni,
  */
 int scmi_register_protocol_events(const struct scmi_handle *handle,
 				  u8 proto_id, size_t queue_sz,
-				  const struct scmi_protocol_event_ops *ops,
+				  const struct scmi_event_ops *ops,
 				  const struct scmi_event *evt, int num_events,
 				  int num_sources)
 {
@@ -1342,14 +1342,21 @@ static void scmi_protocols_late_init(struct work_struct *work)
 			pr_info("SCMI Notifications: finalized PENDING handler - key:%X\n",
 				hndl->key);
 			ret = scmi_event_handler_enable_events(hndl);
+			if (ret) {
+				dev_dbg(ni->handle->dev,
+					"purging INVALID handler - key:%X\n",
+					hndl->key);
+				scmi_put_active_handler(ni, hndl);
+			}
 		} else {
 			ret = scmi_valid_pending_handler(ni, hndl);
-		}
-		if (!ret) {
-			pr_info("SCMI Notifications: purging PENDING handler - key:%X\n",
-				hndl->key);
-			/* this hndl can be only a pending one */
-			scmi_put_handler_unlocked(ni, hndl);
+			if (ret) {
+				dev_dbg(ni->handle->dev,
+					"purging PENDING handler - key:%X\n",
+					hndl->key);
+				/* this hndl can be only a pending one */
+				scmi_put_handler_unlocked(ni, hndl);
+			}
 		}
 	}
 	mutex_unlock(&ni->pending_mtx);

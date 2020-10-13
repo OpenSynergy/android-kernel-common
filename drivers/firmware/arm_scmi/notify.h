@@ -14,6 +14,7 @@
 #include <linux/ktime.h>
 #include <linux/types.h>
 
+#define SCMI_PROTO_QUEUE_SZ	4096
 #define MAP_EVT_TO_ENABLE_CMD(id, map)			\
 ({							\
 	int ret = -1;					\
@@ -42,7 +43,7 @@ struct scmi_event {
 };
 
 /**
- * struct scmi_protocol_event_ops  - Protocol helpers called by the notification
+ * struct scmi_event_ops  - Protocol helpers called by the notification
  *				     core.
  * @set_notify_enabled: Enable/disable the required evt_id/src_id notifications
  *			using the proper custom protocol commands.
@@ -54,11 +55,11 @@ struct scmi_event {
  *			Return NULL on failure otherwise @report now fully
  *			populated
  *
- * Context: Helpers described in &struct scmi_protocol_event_ops are called
+ * Context: Helpers described in &struct scmi_event_ops are called
  *	    only in process context.
  */
-struct scmi_protocol_event_ops {
-	bool (*set_notify_enabled)(const struct scmi_handle *handle,
+struct scmi_event_ops {
+	int (*set_notify_enabled)(const struct scmi_handle *handle,
 				   u8 evt_id, u32 src_id, bool enabled);
 	void *(*fill_custom_report)(const struct scmi_handle *handle,
 				    u8 evt_id, ktime_t timestamp,
@@ -71,7 +72,7 @@ void scmi_notification_exit(struct scmi_handle *handle);
 
 int scmi_register_protocol_events(const struct scmi_handle *handle,
 				  u8 proto_id, size_t queue_sz,
-				  const struct scmi_protocol_event_ops *ops,
+				  const struct scmi_event_ops *ops,
 				  const struct scmi_event *evt, int num_events,
 				  int num_sources);
 int scmi_notify(const struct scmi_handle *handle, u8 proto_id, u8 evt_id,

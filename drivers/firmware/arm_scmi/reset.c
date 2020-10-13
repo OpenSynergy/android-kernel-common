@@ -222,7 +222,7 @@ static int scmi_reset_notify(const struct scmi_handle *handle, u32 domain_id,
 	return ret;
 }
 
-static bool scmi_reset_set_notify_enabled(const struct scmi_handle *handle,
+static int scmi_reset_set_notify_enabled(const struct scmi_handle *handle,
 					  u8 evt_id, u32 src_id, bool enable)
 {
 	int ret;
@@ -232,7 +232,7 @@ static bool scmi_reset_set_notify_enabled(const struct scmi_handle *handle,
 		pr_warn("SCMI Notifications - Proto:%X - FAIL_ENABLED - evt[%X] dom[%d] - ret:%d\n",
 			SCMI_PROTOCOL_RESET, evt_id, src_id, ret);
 
-	return !ret;
+	return ret;
 }
 
 static void *scmi_reset_fill_custom_report(const struct scmi_handle *handle,
@@ -274,7 +274,7 @@ static const struct scmi_event reset_events[] = {
 	},
 };
 
-static const struct scmi_protocol_event_ops reset_event_ops = {
+static const struct scmi_event_ops reset_event_ops = {
 	.set_notify_enabled = scmi_reset_set_notify_enabled,
 	.fill_custom_report = scmi_reset_fill_custom_report,
 };

@@ -832,7 +832,7 @@ static const struct scmi_sensor_ops sensor_ops = {
 	.config_set = scmi_sensor_config_set,
 };
 
-static bool scmi_sensor_set_notify_enabled(const struct scmi_handle *handle,
+static int scmi_sensor_set_notify_enabled(const struct scmi_handle *handle,
 					   u8 evt_id, u32 src_id, bool enable)
 {
 	int ret;
@@ -854,7 +854,7 @@ static bool scmi_sensor_set_notify_enabled(const struct scmi_handle *handle,
 		pr_warn("SCMI Notifications - Proto:%X - FAIL_ENABLED - evt[%X] dom[%d] - ret:%d\n",
 			SCMI_PROTOCOL_SENSOR, evt_id, src_id, ret);
 
-	return !ret;
+	return ret;
 }
 
 static void *scmi_sensor_fill_custom_report(const struct scmi_handle *handle,
@@ -935,7 +935,7 @@ static const struct scmi_event sensor_events[] = {
 	},
 };
 
-static const struct scmi_protocol_event_ops sensor_event_ops = {
+static const struct scmi_event_ops sensor_event_ops = {
 	.set_notify_enabled = scmi_sensor_set_notify_enabled,
 	.fill_custom_report = scmi_sensor_fill_custom_report,
 };

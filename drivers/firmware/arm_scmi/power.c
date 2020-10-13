@@ -211,7 +211,7 @@ static int scmi_power_request_notify(const struct scmi_handle *handle,
 	return ret;
 }
 
-static bool scmi_power_set_notify_enabled(const struct scmi_handle *handle,
+static int scmi_power_set_notify_enabled(const struct scmi_handle *handle,
 					  u8 evt_id, u32 src_id, bool enable)
 {
 	int ret;
@@ -221,7 +221,7 @@ static bool scmi_power_set_notify_enabled(const struct scmi_handle *handle,
 		pr_warn("SCMI Notifications - Proto:%X - FAIL_ENABLE - evt[%X] dom[%d] - ret:%d\n",
 				SCMI_PROTOCOL_POWER, evt_id, src_id, ret);
 
-	return !ret;
+	return ret;
 }
 
 static void *scmi_power_fill_custom_report(const struct scmi_handle *handle,
@@ -264,7 +264,7 @@ static const struct scmi_event power_events[] = {
 	},
 };
 
-static const struct scmi_protocol_event_ops power_event_ops = {
+static const struct scmi_event_ops power_event_ops = {
 	.set_notify_enabled = scmi_power_set_notify_enabled,
 	.fill_custom_report = scmi_power_fill_custom_report,
 };
