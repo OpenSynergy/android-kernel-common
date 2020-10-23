@@ -263,6 +263,8 @@ struct scmi_desc {
 extern const struct scmi_desc scmi_mailbox_desc;
 #endif
 
+int scmi_set_transport_info(struct device *dev, void *transport_info);
+void *scmi_get_transport_info(struct device *dev);
 void scmi_rx_callback(struct scmi_chan_info *cinfo, u32 msg_hdr,
 		      struct scmi_xfer *xfer);
 void scmi_free_channel(struct scmi_chan_info *cinfo, struct idr *idr, int id);

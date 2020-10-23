@@ -84,6 +84,7 @@ struct scmi_xfers_info {
  * @rx_idr: IDR object to map protocol id to Rx channel info pointer
  * @protocols_imp: List of protocols implemented, currently maximum of
  *	MAX_PROTOCOLS_IMP elements allocated by the base protocol
+ * @transport_info: Transport private info
  * @node: List head
  * @users: Number of users of this instance
  */
@@ -97,6 +98,7 @@ struct scmi_info {
 	struct idr tx_idr;
 	struct idr rx_idr;
 	u8 *protocols_imp;
+	void *transport_info;
 	struct list_head node;
 	int users;
 };
@@ -340,6 +342,39 @@ void scmi_rx_callback(struct scmi_chan_info *cinfo, u32 msg_hdr,
 		WARN_ONCE(1, "received unknown msg_type:%d\n", msg_type);
 		break;
 	}
+}
+
+/**
+ * scmi_set_transport_info() - Set transport private info
+ *
+ * @dev: SCMI instance device
+ * @transport_info: transport private info
+ *
+ * Return: 0 on success, otherwise error.
+ */
+int scmi_set_transport_info(struct device *dev, void *transport_info)
+{
+	struct scmi_info *info = dev_get_drvdata(dev);
+
+	if (!info)
+		return -EBADR;
+
+	info->transport_info = transport_info;
+	return 0;
+}
+
+/**
+ * scmi_get_transport_info() - Get transport private info
+ *
+ * @dev: SCMI instance device
+ *
+ * Return: transport private info on success, otherwise NULL.
+ */
+void *scmi_get_transport_info(struct device *dev)
+{
+	struct scmi_info *info = dev_get_drvdata(dev);
+
+	return info ? info->transport_info : NULL;
 }
 
 /**
