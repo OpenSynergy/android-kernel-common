@@ -160,6 +160,8 @@ int scmi_version_get(const struct scmi_handle *h, u8 protocol, u32 *version);
 void scmi_setup_protocol_implemented(const struct scmi_handle *handle,
 				     u8 *prot_imp);
 
+bool is_scmi_protocol_device(struct device *dev);
+
 int scmi_base_protocol_init(struct scmi_handle *h);
 
 int __init scmi_bus_init(void);
