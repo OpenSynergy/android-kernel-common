@@ -8,6 +8,7 @@
 #ifndef _LINUX_SCMI_PROTOCOL_H
 #define _LINUX_SCMI_PROTOCOL_H
 
+#include <linux/bitfield.h>
 #include <linux/device.h>
 #include <linux/notifier.h>
 #include <linux/types.h>
@@ -155,66 +156,135 @@ struct scmi_sensor_reading {
 	u32 timestamp_high;
 };
 
-struct scmi_extended_attrs {
-	s32 min_range_low;
-	s32 min_range_high;
-	s32 max_range_low;
-	s32 max_range_high;
+/**
+ * scmi_range_attrs  - specifies a sensor or axis values' range
+ * @min_range: The minimum value which can be represented by the sensor/axis.
+ * @max_range: The maximum value which can be represented by the sensor/axis.
+ */
+struct scmi_range_attrs {
+	long long min_range;
+	long long max_range;
 };
 
+/**
+ * scmi_sensor_axis_info  - describes one sensor axes
+ * @id: The axes ID.
+ * @type: Axes type. Chosen amongst one of @enum scmi_sensor_class.
+ * @scale: Power-of-10 multiplier applied to the axis unit.
+ * @name: NULL-terminated string representing axes name as advertised by
+ *	  SCMI platform.
+ * @extended_attrs: Flag to indicate the presence of additional extended
+ *		    attributes for this axes.
+ * @resolution: Extended attribute representing the resolution of the axes.
+ *		Set to 0 if not reported by this axes.
+ * @exponent: Extended attribute representing the power-of-10 multiplier that
+ *	      is applied to the resolution field. Set to 0 if not reported by
+ *	      this axes.
+ * @attrs: Extended attributes representing minimum and maximum values
+ *	   measurable by this axes. Set to 0 if not reported by this sensor.
+ */
 struct scmi_sensor_axis_info {
-	u32 id;
-	u8 type;
-	s8 scale;
+	unsigned int id;
+	unsigned int type;
+	int scale;
 	char name[SCMI_MAX_STR_SIZE];
 	bool extended_attrs;
-	u32 resolution;
-	s8 exponent;
-	struct scmi_extended_attrs attrs;
+	unsigned int resolution;
+	int exponent;
+	struct scmi_range_attrs attrs;
 };
 
+/**
+ * scmi_sensor_intervals_info  - describes number and type of available update
+ * intervals
+ * @segmented: Flag for segmented intervals' representation. When True there
+ *	       will be exactly 3 intervals in @desc, with each entry
+ *	       representing a member of a segment in this order:
+ *	       {lowest update interval, highest update interval, step size}
+ * @count: Number of intervals described in @desc.
+ * @desc: Array of @count interval descriptor bitmask represented as detailed in
+ *	  the SCMI specification: it can be accessed using the accompanying
+ *	  macros.
+ * @prealloc_pool: A minimal preallocated pool of desc entries used to avoid
+ *		   lesser-than-64-bytes dynamic allocation for small @count
+ *		   values.
+ */
 struct scmi_sensor_intervals_info {
 	bool segmented;
-	u32 count;
-	u32 *desc;
+	unsigned int count;
+#define SCMI_SENS_INTVL_SEGMENT_LOW	0
+#define SCMI_SENS_INTVL_SEGMENT_HIGH	1
+#define SCMI_SENS_INTVL_SEGMENT_STEP	2
+	unsigned int *desc;
+#define SCMI_SENS_INTVL_GET_SECS(x)		FIELD_GET(GENMASK(20, 5), (x))
+#define SCMI_SENS_INTVL_GET_EXP(x)					\
+	({								\
+		int __signed_exp = FIELD_GET(GENMASK(4, 0), (x));	\
+									\
+		if (__signed_exp & BIT(4))				\
+			__signed_exp |= GENMASK(31, 5);			\
+		__signed_exp;						\
+	})
+#define SCMI_MAX_PREALLOC_POOL			16
+	unsigned int prealloc_pool[SCMI_MAX_PREALLOC_POOL];
 };
 
+/**
+ * struct scmi_sensor_info - represents information related to one of the
+ * available sensors.
+ * @id: Sensor ID.
+ * @type: Sensor type. Chosen amongst one of @enum scmi_sensor_class.
+ * @scale: Power-of-10 multiplier applied to the sensor unit.
+ * @num_trip_points: Number of maximum configurable trip points.
+ * @async: Flag for asynchronous read support.
+ * @update: Flag for continuouos update notification support.
+ * @timestamped: Flag for timestamped read support.
+ * @tstamp_scale: Power-of-10 multiplier applied to the sensor timestamps to
+ *		  represent it in seconds.
+ * @num_axis: Number of supported axis if any. Reported as 0 for scalar sensors.
+ * @axis: Pointer to an array of @num_axis descriptors.
+ * @intervals: Descriptor of available update intervals.
+ * @sensor_config: A bitmask reporting the current sensor configuration as
+ *		   detailed in the SCMI specification: it can accessed and
+ *		   modified through the accompanying macros.
+ * @name: NULL-terminated string representing sensor name as advertised by
+ *	  SCMI platform.
+ * @extended_scalar_attrs: Flag to indicate the presence of additional extended
+ *			   attributes for this sensor.
+ * @sensor_power: Extended attribute representing the average power
+ *		  consumed by the sensor in microwatts (uW) when it is active.
+ *		  Reported here only for scalar sensors.
+ *		  Set to 0 if not reported by this sensor.
+ * @resolution: Extended attribute representing the resolution of the sensor.
+ *		Reported here only for scalar sensors.
+ *		Set to 0 if not reported by this sensor.
+ * @exponent: Extended attribute representing the power-of-10 multiplier that is
+ *	      applied to the resolution field.
+ *	      Reported here only for scalar sensors.
+ *	      Set to 0 if not reported by this sensor.
+ * @scalar_attrs: Extended attributes representing minimum and maximum
+ *		  measurable values by this sensor.
+ *		  Reported here only for scalar sensors.
+ *		  Set to 0 if not reported by this sensor.
+ */
 struct scmi_sensor_info {
-	u32 id;
-	u8 type;
-	s8 scale;
-	u8 num_trip_points;
+	unsigned int id;
+	unsigned int type;
+	int scale;
+	unsigned int num_trip_points;
 	bool async;
 	bool update;
 	bool timestamped;
-	s8 tstamp_scale;
-	u8 num_axis;
+	int tstamp_scale;
+	unsigned int num_axis;
 	struct scmi_sensor_axis_info *axis;
 	struct scmi_sensor_intervals_info intervals;
-	u32 sensor_config;
-#define SCMI_SENSOR_CFG_GET_UPDATE_SECS(x)	(((x) >> 16) & 0xffff)
-#define SCMI_SENSOR_CFG_SET_UPDATE_SECS(x, v)	((x) | ((u32)(v) << 16))
-
-#define SCMI_SENSOR_CFG_GET_UPDATE_MULTI(x)	(((x) >> 11) & 0x1f)
-#define SCMI_SENSOR_CFG_SET_UPDATE_MULTI(x, v)				\
-		((x) | (((s16)(v) << 11) & GENMASK(15, 11)))
-#define SCMI_SENSOR_CFG_SET_AUTO_ROUND_UP(x)	((x) | BIT(10))
-#define SCMI_SENSOR_CFG_SET_ROUND_UP(x)		(((x) & ~BIT(10)) | BIT(9))
-#define SCMI_SENSOR_CFG_SET_ROUND_DOWN(x)	((x) & ~GENMASK(10, 9))
-
-#define SCMI_SENSOR_CFG_IS_TSTAMP_ENABLED(x)	((x) & BIT(1))
-#define SCMI_SENSOR_CFG_SET_TSTAMP_ENABLED(x)	((x) | BIT(1))
-#define SCMI_SENSOR_CFG_SET_TSTAMP_DISABLED(x)	((x) & ~BIT(1))
-
-#define SCMI_SENSOR_CFG_IS_ENABLED(x)		((x) & BIT(0))
-#define SCMI_SENSOR_CFG_SET_ENABLE(x)		((x) | BIT(0))
-#define SCMI_SENSOR_CFG_SET_DISABLE(x)		((x) & ~BIT(0))
 	char name[SCMI_MAX_STR_SIZE];
 	bool extended_scalar_attrs;
-	u32 sensor_power;
-	u32 resolution;
-	s8 exponent;
-	struct scmi_extended_attrs scalar_attrs;
+	unsigned int sensor_power;
+	unsigned int resolution;
+	int exponent;
+	struct scmi_range_attrs scalar_attrs;
 };
 
 /*
@@ -316,7 +386,7 @@ enum scmi_sensor_class {
 	METERS_SEC = 0x5A,
 	CUBIC_METERS_SEC = 0x5B,
 	MM_MERCURY = 0x5C,
-	RADIANS_SEC_SQAURED = 0x5D,
+	RADIANS_SEC_SQUARED = 0x5D,
 	OEM_UNIT = 0xFF
 };
 

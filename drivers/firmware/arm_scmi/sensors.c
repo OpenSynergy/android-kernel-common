@@ -5,12 +5,16 @@
  * Copyright (C) 2018-2020 ARM Ltd.
  */
 
+#define pr_fmt(fmt) "SCMI Notifications SENSOR - " fmt
+
+#include <linux/bitfield.h>
 #include <linux/scmi_protocol.h>
 
 #include "common.h"
 #include "notify.h"
 
-#define SCMI_MAX_NUM_SENSOR_AXIS	64
+#define SCMI_MAX_NUM_SENSOR_AXIS	63
+#define	SCMIv2_SENSOR_PROTOCOL		0x10000
 
 enum scmi_sensor_protocol_cmd {
 	SENSOR_DESCRIPTION_GET = 0x3,
@@ -33,32 +37,31 @@ struct scmi_msg_resp_sensor_attributes {
 	__le32 reg_size;
 };
 
-/* v21 attributes_low macros */
-#define SUPPORTS_UPDATE_NOTIFY(x)	((x) & BIT(30))
-#define SENSOR_MULTI(x)			(((x) >> 10) & 0x1f)
-#define SUPPORTS_TIMESTAMP(x)		((x) & BIT(9))
-#define SUPPORTS_EXTEND_ATTRS(x)	((x) & BIT(8))
+/* v3 attributes_low macros */
+#define SUPPORTS_UPDATE_NOTIFY(x)	FIELD_GET(BIT(30), (x))
+#define SENSOR_TSTAMP_EXP(x)		FIELD_GET(GENMASK(14, 10), (x))
+#define SUPPORTS_TIMESTAMP(x)		FIELD_GET(BIT(9), (x))
+#define SUPPORTS_EXTEND_ATTRS(x)	FIELD_GET(BIT(8), (x))
 
 /* v2 attributes_high macros */
-#define SENSOR_UPDATE_BASE(x)		(((x) >> 27) & 0x1f)
-#define SENSOR_UPDATE_SCALE(x)		(((x) >> 22) & 0x1f)
+#define SENSOR_UPDATE_BASE(x)		FIELD_GET(GENMASK(31, 27), (x))
+#define SENSOR_UPDATE_SCALE(x)		FIELD_GET(GENMASK(26, 22), (x))
 
-/* v21 attributes_high macros */
-#define SENSOR_AXIS_NUMBER(x)		(((x) >> 16) & 0x3f)
-#define SUPPORTS_AXIS(x)		((x) & BIT(8))
+/* v3 attributes_high macros */
+#define SENSOR_AXIS_NUMBER(x)		FIELD_GET(GENMASK(21, 16), (x))
+#define SUPPORTS_AXIS(x)		FIELD_GET(BIT(8), (x))
 
 /* v3 resolution macros */
-#define SENSOR_RES(x)			((x) & 0x3ffffff)
-#define SENSOR_RES_EXP(x)		(((x) >> 27) & 0x1f)
+#define SENSOR_RES(x)			FIELD_GET(GENMASK(26, 0), (x))
+#define SENSOR_RES_EXP(x)		FIELD_GET(GENMASK(31, 27), (x))
 
-struct scmi_extended_attrs_le {
+struct scmi_msg_resp_attrs {
 	__le32 min_range_low;
 	__le32 min_range_high;
 	__le32 max_range_low;
 	__le32 max_range_high;
 };
 
-/* Whole struct is naturally packed */
 struct scmi_msg_resp_sensor_description {
 	__le16 num_returned;
 	__le16 num_remaining;
@@ -66,29 +69,34 @@ struct scmi_msg_resp_sensor_description {
 		__le32 id;
 		__le32 attributes_low;
 /* Common attributes_low macros */
-#define SUPPORTS_ASYNC_READ(x)		((x) & BIT(31))
-#define NUM_TRIP_POINTS(x)		((x) & 0xff)
+#define SUPPORTS_ASYNC_READ(x)		FIELD_GET(BIT(31), (x))
+#define NUM_TRIP_POINTS(x)		FIELD_GET(GENMASK(7, 0), (x))
 		__le32 attributes_high;
 /* Common attributes_high macros */
-#define SENSOR_SCALE(x)			(((x) >> 11) & 0x1f)
+#define SENSOR_SCALE(x)			FIELD_GET(GENMASK(15, 11), (x))
 #define SENSOR_SCALE_SIGN		BIT(4)
-#define SENSOR_SCALE_EXTEND		GENMASK(7, 5)
-#define SENSOR_TYPE(x)			((x) & 0xff)
+#define SENSOR_SCALE_EXTEND		GENMASK(31, 5)
+#define SENSOR_TYPE(x)			FIELD_GET(GENMASK(7, 0), (x))
 		u8 name[SCMI_MAX_STR_SIZE];
 		/* only for version > 2.0 */
 		__le32 power;
 		__le32 resolution;
-		struct scmi_extended_attrs_le scalar_attrs;
-	} desc[0];
+		struct scmi_msg_resp_attrs scalar_attrs;
+	} desc[];
 };
 
-/* Sign extend to a full s8 */
-#define	S8_EXT(v)							\
-	(((v) & SENSOR_SCALE_SIGN) ? ((v) | SENSOR_SCALE_EXTEND) : (v))
+/* Base scmi_sensor_descriptor size excluding extended attrs after name */
+#define SCMI_MSG_RESP_SENS_DESCR_BASE_SZ	28
 
-#define SCMI_MSG_RESP_SENS_DESCR_MAX_SZ					\
-	(sizeof(struct scmi_sensor_descriptor) -			\
-	  sizeof(__le32) * 2 - sizeof(struct scmi_extended_attrs_le))
+/* Sign extend to a full s32 */
+#define	S32_EXT(v)							\
+	({								\
+		int __v = (v);						\
+									\
+		if (__v & SENSOR_SCALE_SIGN)				\
+			__v |= SENSOR_SCALE_EXTEND;			\
+		__v;							\
+	})
 
 struct scmi_msg_sensor_axis_description_get {
 	__le32 id;
@@ -97,21 +105,20 @@ struct scmi_msg_sensor_axis_description_get {
 
 struct scmi_msg_resp_sensor_axis_description {
 	__le32 num_axis_flags;
-#define NUM_AXIS_RETURNED(x)		((x) & 0x3f)
-#define NUM_AXIS_REMAINING(x)		(((x) >> 26) & 0x3f)
+#define NUM_AXIS_RETURNED(x)		FIELD_GET(GENMASK(5, 0), (x))
+#define NUM_AXIS_REMAINING(x)		FIELD_GET(GENMASK(31, 26), (x))
 	struct scmi_axis_descriptor {
 		__le32 id;
 		__le32 attributes_low;
 		__le32 attributes_high;
 		u8 name[SCMI_MAX_STR_SIZE];
 		__le32 resolution;
-		struct scmi_extended_attrs_le attrs;
-	} desc[0];
+		struct scmi_msg_resp_attrs attrs;
+	} desc[];
 };
 
-#define SCMI_MSG_RESP_AXIS_DESCR_MAX_SZ					\
-		(sizeof(struct scmi_axis_descriptor) -			\
-		 sizeof(__le32) - sizeof(struct scmi_extended_attrs_le))
+/* Base scmi_axis_descriptor size excluding extended attrs after name */
+#define SCMI_MSG_RESP_AXIS_DESCR_BASE_SZ	28
 
 struct scmi_msg_sensor_list_update_intervals {
 	__le32 id;
@@ -120,10 +127,10 @@ struct scmi_msg_sensor_list_update_intervals {
 
 struct scmi_msg_resp_sensor_list_update_intervals {
 	__le32 num_intervals_flags;
-#define NUM_INTERVALS_RETURNED(x)	((x) & 0xfff)
-#define SEGMENTED_INTVL_FORMAT(x)	((x) & BIT(12))
-#define NUM_INTERVALS_REMAINING(x)	(((x) >> 16) & 0xffff)
-	__le32 intervals[0];
+#define NUM_INTERVALS_RETURNED(x)	FIELD_GET(GENMASK(11, 0), (x))
+#define SEGMENTED_INTVL_FORMAT(x)	FIELD_GET(BIT(12), (x))
+#define NUM_INTERVALS_REMAINING(x)	FIELD_GET(GENMASK(31, 16), (x))
+	__le32 intervals[];
 };
 
 struct scmi_msg_sensor_request_notify {
@@ -215,8 +222,6 @@ struct sensors_info {
 	struct scmi_sensor_info *sensors;
 };
 
-static u32 single_interval_info;
-
 static int scmi_sensor_attributes_get(const struct scmi_handle *handle,
 				      struct sensors_info *si)
 {
@@ -244,13 +249,11 @@ static int scmi_sensor_attributes_get(const struct scmi_handle *handle,
 	return ret;
 }
 
-static void inline scmi_parse_ext_attrs(struct scmi_extended_attrs *out,
-					struct scmi_extended_attrs_le *in)
+static inline void scmi_parse_range_attrs(struct scmi_range_attrs *out,
+					  struct scmi_msg_resp_attrs *in)
 {
-	out->min_range_low = le32_to_cpu(in->min_range_low);
-	out->min_range_high = le32_to_cpu(in->min_range_high);
-	out->max_range_low = le32_to_cpu(in->max_range_low);
-	out->max_range_high = le32_to_cpu(in->max_range_high);
+	out->min_range = get_unaligned_le64((void *)&in->min_range_low);
+	out->max_range = get_unaligned_le64((void *)&in->max_range_low);
 }
 
 static int scmi_sensor_update_intervals(const struct scmi_handle *handle,
@@ -289,21 +292,37 @@ static int scmi_sensor_update_intervals(const struct scmi_handle *handle,
 		 * Max intervals is not declared previously anywhere so we
 		 * assume it's returned+remaining.
 		 */
-		if (unlikely(!s->intervals.count)) {
+		if (!s->intervals.count) {
+			s->intervals.segmented = SEGMENTED_INTVL_FORMAT(flags);
 			s->intervals.count = num_returned + num_remaining;
-			s->intervals.desc = devm_kcalloc(handle->dev,
-							 s->intervals.count,
-						sizeof(*s->intervals.desc),
-								 GFP_KERNEL);
-			if (!s->intervals.desc) {
+			/* segmented intervals are reported in one triplet */
+			if (s->intervals.segmented &&
+			    (num_remaining || num_returned != 3)) {
+				dev_err(handle->dev,
+					"Sensor ID:%d advertises an invalid segmented interval (%d)\n",
+					s->id, s->intervals.count);
+				s->intervals.segmented = false;
 				s->intervals.count = 0;
-				ret = -ENOMEM;
+				ret = -EINVAL;
 				break;
 			}
-			s->intervals.segmented = SEGMENTED_INTVL_FORMAT(flags);
+			/* Direct allocation when exceeding pre-allocated */
+			if (s->intervals.count >= SCMI_MAX_PREALLOC_POOL) {
+				s->intervals.desc =
+					devm_kcalloc(handle->dev,
+						     s->intervals.count,
+						     sizeof(*s->intervals.desc),
+						     GFP_KERNEL);
+				if (!s->intervals.desc) {
+					s->intervals.segmented = false;
+					s->intervals.count = 0;
+					ret = -ENOMEM;
+					break;
+				}
+			}
 		} else if (desc_index + num_returned > s->intervals.count) {
 			dev_err(handle->dev,
-				"No. of update intervals can't exceed %d",
+				"No. of update intervals can't exceed %d\n",
 				s->intervals.count);
 			ret = -EINVAL;
 			break;
@@ -314,6 +333,8 @@ static int scmi_sensor_update_intervals(const struct scmi_handle *handle,
 					le32_to_cpu(buf->intervals[cnt]);
 
 		desc_index += num_returned;
+
+		scmi_reset_rx_to_maxsz(handle, ti);
 		/*
 		 * check for both returned and remaining to avoid infinite
 		 * loop due to buggy firmware
@@ -363,7 +384,7 @@ static int scmi_sensor_axis_description(const struct scmi_handle *handle,
 		num_remaining = NUM_AXIS_REMAINING(flags);
 
 		if (desc_index + num_returned > s->num_axis) {
-			dev_err(handle->dev, "No. of axis can't exceed %d",
+			dev_err(handle->dev, "No. of axis can't exceed %d\n",
 				s->num_axis);
 			break;
 		}
@@ -372,7 +393,7 @@ static int scmi_sensor_axis_description(const struct scmi_handle *handle,
 		for (cnt = 0; cnt < num_returned; cnt++) {
 			u32 attrh, attrl;
 			struct scmi_sensor_axis_info *a;
-			size_t dsize = SCMI_MSG_RESP_AXIS_DESCR_MAX_SZ;
+			size_t dsize = SCMI_MSG_RESP_AXIS_DESCR_BASE_SZ;
 
 			attrl = le32_to_cpu(adesc->attributes_low);
 
@@ -382,7 +403,7 @@ static int scmi_sensor_axis_description(const struct scmi_handle *handle,
 			a->extended_attrs = SUPPORTS_EXTEND_ATTRS(attrl);
 
 			attrh = le32_to_cpu(adesc->attributes_high);
-			a->scale = S8_EXT(SENSOR_SCALE(attrh));
+			a->scale = S32_EXT(SENSOR_SCALE(attrh));
 			a->type = SENSOR_TYPE(attrh);
 			strlcpy(a->name, adesc->name, SCMI_MAX_STR_SIZE);
 
@@ -392,10 +413,11 @@ static int scmi_sensor_axis_description(const struct scmi_handle *handle,
 
 				a->resolution = SENSOR_RES(ares);
 				a->exponent =
-					S8_EXT(SENSOR_RES_EXP(ares));
+					S32_EXT(SENSOR_RES_EXP(ares));
 				dsize += sizeof(adesc->resolution);
 
-				scmi_parse_ext_attrs(&a->attrs, &adesc->attrs);
+				scmi_parse_range_attrs(&a->attrs,
+						       &adesc->attrs);
 				dsize += sizeof(adesc->attrs);
 			}
 
@@ -403,6 +425,8 @@ static int scmi_sensor_axis_description(const struct scmi_handle *handle,
 		}
 
 		desc_index += num_returned;
+
+		scmi_reset_rx_to_maxsz(handle, te);
 		/*
 		 * check for both returned and remaining to avoid infinite
 		 * loop due to buggy firmware
@@ -412,7 +436,6 @@ static int scmi_sensor_axis_description(const struct scmi_handle *handle,
 	scmi_xfer_put(handle, te);
 	return ret;
 }
-
 
 static int scmi_sensor_description_get(const struct scmi_handle *handle,
 				       struct sensors_info *si)
@@ -452,7 +475,7 @@ static int scmi_sensor_description_get(const struct scmi_handle *handle,
 		for (cnt = 0; cnt < num_returned; cnt++) {
 			u32 attrh, attrl;
 			struct scmi_sensor_info *s;
-			size_t dsize = SCMI_MSG_RESP_SENS_DESCR_MAX_SZ;
+			size_t dsize = SCMI_MSG_RESP_SENS_DESCR_BASE_SZ;
 
 			s = &si->sensors[desc_index + cnt];
 			s->id = le32_to_cpu(sdesc->id);
@@ -462,62 +485,73 @@ static int scmi_sensor_description_get(const struct scmi_handle *handle,
 			s->async = SUPPORTS_ASYNC_READ(attrl);
 			s->num_trip_points = NUM_TRIP_POINTS(attrl);
 			/**
-			 * only v2.1 specific bitfield below.
+			 * only SCMIv3.0 specific bitfield below.
 			 * Such bitfields are assumed to be zeroed on non
 			 * relevant fw versions...assuming fw not buggy !
 			 */
 			s->update = SUPPORTS_UPDATE_NOTIFY(attrl);
 			s->timestamped = SUPPORTS_TIMESTAMP(attrl);
 			if (s->timestamped)
-				s->tstamp_scale = S8_EXT(SENSOR_MULTI(attrl));
+				s->tstamp_scale =
+					S32_EXT(SENSOR_TSTAMP_EXP(attrl));
 			s->extended_scalar_attrs =
 				SUPPORTS_EXTEND_ATTRS(attrl);
 
 			attrh = le32_to_cpu(sdesc->attributes_high);
 			/* common bitfields parsing */
-			s->scale = S8_EXT(SENSOR_SCALE(attrh));
+			s->scale = S32_EXT(SENSOR_SCALE(attrh));
 			s->type = SENSOR_TYPE(attrh);
-			if (si->version == 0x10000) {
-				/* Bitfield 31:22 is only used in v2.0 */
+			/* Use pre-allocated pool wherever possible */
+			s->intervals.desc = s->intervals.prealloc_pool;
+			if (si->version == SCMIv2_SENSOR_PROTOCOL) {
 				s->intervals.segmented = false;
 				s->intervals.count = 1;
-				/* using same u32 desc format as v2.1 */
-				single_interval_info =
+				/*
+				 * Convert SCMIv2.0 update interval format to
+				 * SCMIv3.0 to be used as the common exposed
+				 * descriptor, accessible via common macros.
+				 */
+				s->intervals.desc[0] =
 					(SENSOR_UPDATE_BASE(attrh) << 5) |
-					 S8_EXT(SENSOR_UPDATE_SCALE(attrh));
-				s->intervals.desc = &single_interval_info;
+					 SENSOR_UPDATE_SCALE(attrh);
 			} else {
 				/*
-				 * For version > v2.0 update intervals are
-				 * retrieved via a dedicated command.
+				 * From SCMIv3.0 update intervals are retrieved
+				 * via a dedicated (optional) command.
+				 * Since the command is optional, on error carry
+				 * on without any update interval.
 				 */
-				ret = scmi_sensor_update_intervals(handle, s);
-				if (ret)
-					goto out;
+				if (scmi_sensor_update_intervals(handle, s))
+					dev_dbg(handle->dev,
+						"Update Intervals not available for sensor ID:%d\n",
+						s->id);
 			}
 			/**
-			 * only v2.1 specific bitfield below.
+			 * only > SCMIv2.0 specific bitfield below.
 			 * Such bitfields are assumed to be zeroed on non
 			 * relevant fw versions...assuming fw not buggy !
 			 */
-			s->num_axis = SUPPORTS_AXIS(attrh) ?
-					SENSOR_AXIS_NUMBER(attrh) : 0;
+			s->num_axis = min_t(unsigned int,
+					    SUPPORTS_AXIS(attrh) ?
+					    SENSOR_AXIS_NUMBER(attrh) : 0,
+					    SCMI_MAX_NUM_SENSOR_AXIS);
 			strlcpy(s->name, sdesc->name, SCMI_MAX_STR_SIZE);
 
 			if (s->extended_scalar_attrs) {
 				s->sensor_power = le32_to_cpu(sdesc->power);
 				dsize += sizeof(sdesc->power);
+				/* Only for sensors reporting scalar values */
 				if (s->num_axis == 0) {
 					unsigned int sres =
 						le32_to_cpu(sdesc->resolution);
 
 					s->resolution = SENSOR_RES(sres);
 					s->exponent =
-						S8_EXT(SENSOR_RES_EXP(sres));
+						S32_EXT(SENSOR_RES_EXP(sres));
 					dsize += sizeof(sdesc->resolution);
 
-					scmi_parse_ext_attrs(&s->scalar_attrs,
-							&sdesc->scalar_attrs);
+					scmi_parse_range_attrs(&s->scalar_attrs,
+							       &sdesc->scalar_attrs);
 					dsize += sizeof(sdesc->scalar_attrs);
 				}
 			}
@@ -634,7 +668,6 @@ static int scmi_sensor_config_get(const struct scmi_handle *handle,
 
 		resp = t->rx.buf;
 		*sensor_config = le32_to_cpu(resp->sensor_config);
-		s->sensor_config = *sensor_config;
 	}
 
 	scmi_xfer_put(handle, t);
@@ -662,7 +695,6 @@ static int scmi_sensor_config_set(const struct scmi_handle *handle,
 		struct sensors_info *si = handle->sensor_priv;
 		struct scmi_sensor_info *s = si->sensors + sensor_id;
 
-		s->sensor_config = sensor_config;
 	}
 
 	scmi_xfer_put(handle, t);
