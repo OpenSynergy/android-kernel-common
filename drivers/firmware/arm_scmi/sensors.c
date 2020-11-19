@@ -171,10 +171,6 @@ struct scmi_msg_sensor_reading_get {
 #define SENSOR_READ_ASYNC	BIT(0)
 };
 
-struct scmi_resp_sensor_reading_get {
-	__le64 readings;
-};
-
 struct scmi_resp_sensor_reading_complete {
 	__le32 id;
 	__le64 readings;
@@ -187,13 +183,9 @@ struct scmi_sensor_reading_le {
 	__le32 timestamp_high;
 };
 
-struct scmi_resp_sensor_reading_get_v21{
-	struct scmi_sensor_reading_le readings[0];
-};
-
-struct scmi_resp_sensor_reading_complete_v21{
+struct scmi_resp_sensor_reading_complete_v3 {
 	__le32 id;
-	struct scmi_sensor_reading_le readings[0];
+	struct scmi_sensor_reading_le readings[];
 };
 
 struct scmi_sensor_trip_notify_payld {
@@ -645,62 +637,6 @@ scmi_sensor_trip_point_config(const struct scmi_handle *handle, u32 sensor_id,
 	return ret;
 }
 
-static int scmi_sensor_config_get(const struct scmi_handle *handle,
-				  u32 sensor_id, u32 *sensor_config)
-{
-	int ret;
-	struct scmi_xfer *t;
-	struct scmi_msg_sensor_config_get *msg;
-	struct scmi_resp_sensor_config_get *resp;
-
-	ret = scmi_xfer_get_init(handle, SENSOR_CONFIG_GET,
-				 SCMI_PROTOCOL_SENSOR, sizeof(*msg),
-				 sizeof(*resp), &t);
-	if (ret)
-		return ret;
-
-	msg = t->tx.buf;
-	msg->id = cpu_to_le32(sensor_id);
-	ret = scmi_do_xfer(handle, t);
-	if (!ret) {
-		struct sensors_info *si = handle->sensor_priv;
-		struct scmi_sensor_info *s = si->sensors + sensor_id;
-
-		resp = t->rx.buf;
-		*sensor_config = le32_to_cpu(resp->sensor_config);
-	}
-
-	scmi_xfer_put(handle, t);
-	return ret;
-}
-
-static int scmi_sensor_config_set(const struct scmi_handle *handle,
-				  u32 sensor_id, u32 sensor_config)
-{
-	int ret;
-	struct scmi_xfer *t;
-	struct scmi_msg_sensor_config_set *msg;
-
-	ret = scmi_xfer_get_init(handle, SENSOR_CONFIG_SET,
-				 SCMI_PROTOCOL_SENSOR, sizeof(*msg), 0, &t);
-	if (ret)
-		return ret;
-
-	msg = t->tx.buf;
-	msg->id = cpu_to_le32(sensor_id);
-	msg->sensor_config = cpu_to_le32(sensor_config);
-
-	ret = scmi_do_xfer(handle, t);
-	if (!ret) {
-		struct sensors_info *si = handle->sensor_priv;
-		struct scmi_sensor_info *s = si->sensors + sensor_id;
-
-	}
-
-	scmi_xfer_put(handle, t);
-	return ret;
-}
-
 /**
  * scmi_sensor_reading_get  - Read scalar sensor value
  * @handle: Platform handle
@@ -726,8 +662,7 @@ static int scmi_sensor_reading_get(const struct scmi_handle *handle,
 	struct scmi_sensor_info *s = si->sensors + sensor_id;
 
 	ret = scmi_xfer_get_init(handle, SENSOR_READING_GET,
-				 SCMI_PROTOCOL_SENSOR, sizeof(*sensor),
-				 sizeof(u64), &t);
+				 SCMI_PROTOCOL_SENSOR, sizeof(*sensor), 0, &t);
 	if (ret)
 		return ret;
 
@@ -741,32 +676,27 @@ static int scmi_sensor_reading_get(const struct scmi_handle *handle,
 
 			resp = t->rx.buf;
 			if (le32_to_cpu(resp->id) == sensor_id)
-				*value = le64_to_cpu(resp->readings);
+				*value = get_unaligned_le64(&resp->readings);
 			else
 				ret = -EPROTO;
 		}
 	} else {
 		sensor->flags = cpu_to_le32(0);
 		ret = scmi_do_xfer(handle, t);
-		if (!ret) {
-			struct scmi_resp_sensor_reading_get *resp;
-
-			resp = t->rx.buf;
-			*value = le64_to_cpu(resp->readings);
-		}
+		if (!ret) 
+			*value = get_unaligned_le64(t->rx.buf);
 	}
 
 	scmi_xfer_put(handle, t);
 	return ret;
 }
 
-static void inline scmi_parse_sensor_readings(struct scmi_sensor_reading *out,
-					const struct scmi_sensor_reading_le *in)
+static inline void
+scmi_parse_sensor_readings(struct scmi_sensor_reading *out,
+			   const struct scmi_sensor_reading_le *in)
 {
-	out->sensor_value_low = le32_to_cpu(in->sensor_value_low);
-	out->sensor_value_high = le32_to_cpu(in->sensor_value_high);
-	out->timestamp_low = le32_to_cpu(in->timestamp_low);
-	out->timestamp_high = le32_to_cpu(in->timestamp_high);
+	out->value = get_unaligned_le64((void *)&in->sensor_value_low);
+	out->timestamp = get_unaligned_le64((void *)&in->timestamp_low);
 }
 
 /**
@@ -810,14 +740,14 @@ scmi_sensor_reading_get_timestamped(const struct scmi_handle *handle,
 		ret = scmi_do_xfer_with_response(handle, t);
 		if (!ret) {
 			int i;
-			struct scmi_resp_sensor_reading_complete_v21 *resp;
+			struct scmi_resp_sensor_reading_complete_v3 *resp;
 
 			resp = t->rx.buf;
 			/* Retrieve only the number of requested axis anyway */
 			if (le32_to_cpu(resp->id) == sensor_id)
 				for (i = 0; i < count; i++)
 					scmi_parse_sensor_readings(&readings[i],
-							    &resp->readings[i]);
+								   &resp->readings[i]);
 			else
 				ret = -EPROTO;
 		}
@@ -826,12 +756,12 @@ scmi_sensor_reading_get_timestamped(const struct scmi_handle *handle,
 		ret = scmi_do_xfer(handle, t);
 		if (!ret) {
 			int i;
-			struct scmi_resp_sensor_reading_get_v21 *resp;
+			struct scmi_sensor_reading_le *resp_readings;
 
-			resp = t->rx.buf;
+			resp_readings = t->rx.buf;
 			for (i = 0; i < count; i++)
 				scmi_parse_sensor_readings(&readings[i],
-							   &resp->readings[i]);
+							   &resp_readings[i]);
 		}
 	}
 
@@ -860,8 +790,6 @@ static const struct scmi_sensor_ops sensor_ops = {
 	.trip_point_config = scmi_sensor_trip_point_config,
 	.reading_get = scmi_sensor_reading_get,
 	.reading_get_timestamped = scmi_sensor_reading_get_timestamped,
-	.config_get = scmi_sensor_config_get,
-	.config_set = scmi_sensor_config_set,
 };
 
 static int scmi_sensor_set_notify_enabled(const struct scmi_handle *handle,

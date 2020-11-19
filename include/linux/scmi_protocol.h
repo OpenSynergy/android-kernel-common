@@ -149,11 +149,18 @@ struct scmi_power_ops {
 			 u32 *state);
 };
 
+/**
+ * scmi_sensor_reading  - represent a timestamped read
+ *
+ * Used by @reading_get_timestamped method.
+ *
+ * @value: The signed value sensor read.
+ * @timestamp: An unsigned timestamp for the sensor read, as provided by
+ *	       SCMI platform. Set to zero when not available.
+ */
 struct scmi_sensor_reading {
-	s32 sensor_value_low;
-	s32 sensor_value_high;
-	u32 timestamp_low;
-	u32 timestamp_high;
+	long long value;
+	unsigned long long timestamp;
 };
 
 /**
@@ -399,12 +406,10 @@ enum scmi_sensor_class {
  * @trip_point_config: selects and configures a trip-point of interest
  * @reading_get: gets the current value of the sensor
  * @reading_get_timestamped: gets the current value and timestamp, when
- *			     available, of the sensor. (as of v2.1 spec)
+ *			     available, of the sensor. (as of v3.0 spec)
  *			     Supports multi-axis sensors for sensors which
  *			     supports it and if the @reading array size of
  *			     @count entry equals the sensor num_axis
- * @config_get: Get sensor current configuration
- * @config_set: Set sensor current configuration
  */
 struct scmi_sensor_ops {
 	int (*count_get)(const struct scmi_handle *handle);
@@ -417,10 +422,6 @@ struct scmi_sensor_ops {
 	int (*reading_get_timestamped)(const struct scmi_handle *handle,
 				       u32 sensor_id, u8 count,
 				       struct scmi_sensor_reading *readings);
-	int (*config_get)(const struct scmi_handle *handle,
-			  u32 sensor_id, u32 *sensor_config);
-	int (*config_set)(const struct scmi_handle *handle,
-			  u32 sensor_id, u32 sensor_config);
 };
 
 /**
