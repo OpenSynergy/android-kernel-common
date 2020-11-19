@@ -701,11 +701,11 @@ struct scmi_sensor_trip_point_report {
 };
 
 struct scmi_sensor_update_report {
-	u64 timestamp;
-	u32 agent_id;
-	u32 sensor_id;
-	u8 readings_count;
-	struct scmi_sensor_reading readings[0];
+	ktime_t				timestamp;
+	unsigned int			agent_id;
+	unsigned int			sensor_id;
+	unsigned int			readings_count;
+	struct scmi_sensor_reading	readings[];
 };
 
 struct scmi_reset_issued_report {

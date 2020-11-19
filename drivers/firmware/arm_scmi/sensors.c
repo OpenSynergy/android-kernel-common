@@ -25,6 +25,7 @@ enum scmi_sensor_protocol_cmd {
 	SENSOR_LIST_UPDATE_INTERVALS = 0x8,
 	SENSOR_CONFIG_GET = 0x9,
 	SENSOR_CONFIG_SET = 0xA,
+	SENSOR_CONTINUOUS_UPDATE_NOTIFY = 0xB,
 };
 
 struct scmi_msg_resp_sensor_attributes {
@@ -185,15 +186,10 @@ struct scmi_sensor_trip_notify_payld {
 	__le32 trip_point_desc;
 };
 
-struct scmi_msg_sensor_continuous_update_notify {
-	__le32 id;
-	__le32 event_control;
-};
-
 struct scmi_sensor_update_notify_payld {
 	__le32 agent_id;
 	__le32 sensor_id;
-	struct scmi_sensor_reading_le readings[0];
+	struct scmi_sensor_reading_le readings[];
 };
 
 struct sensors_info {
@@ -594,6 +590,15 @@ static int scmi_sensor_trip_point_notify(const struct scmi_handle *handle,
 }
 
 static int
+scmi_sensor_continuous_update_notify(const struct scmi_handle *handle,
+				     u32 sensor_id, bool enable)
+{
+	return scmi_sensor_request_notify(handle, sensor_id,
+					  SENSOR_CONTINUOUS_UPDATE_NOTIFY,
+					  enable);
+}
+
+static int
 scmi_sensor_trip_point_config(const struct scmi_handle *handle, u32 sensor_id,
 			      u8 trip_id, u64 trip_value)
 {
@@ -838,6 +843,10 @@ static int scmi_sensor_set_notify_enabled(const struct scmi_handle *handle,
 	switch (evt_id) {
 	case SCMI_EVENT_SENSOR_TRIP_POINT_EVENT:
 		ret = scmi_sensor_trip_point_notify(handle, src_id, enable);
+		break;
+	case SCMI_EVENT_SENSOR_UPDATE:
+		ret = scmi_sensor_continuous_update_notify(handle, src_id,
+							   enable);
 		break;
 	default:
 		ret = -EINVAL;
