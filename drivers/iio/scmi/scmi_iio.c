@@ -40,6 +40,16 @@ struct scmi_iio_priv {
 	const struct scmi_sensor_info *sensor_info;
 	u8 *iio_buf;
 	struct notifier_block sensor_update_nb;
+
+	/*
+	* HACK - virtio-scmi sensors work on the other (host) VM, and
+	* sample timestamps from these sensors looks like "timestamp
+	* from the future" for CTS tests. This hack fixes it by
+	* calculation of the timestamp delta from the first received
+	* sensor timestamp and applying this delta.
+	*/
+	bool first_sample;
+	long delta_time_ns;
 };
 
 struct sensor_freq {
@@ -54,6 +64,7 @@ static int scmi_iio_check_valid_sensor(struct scmi_iio_priv *sensor)
 	else
 		return 0;
 }
+
 static int sensor_update_cb(struct notifier_block *nb, unsigned long event,
 			    void *data)
 {
@@ -65,7 +76,6 @@ static int sensor_update_cb(struct notifier_block *nb, unsigned long event,
 	struct iio_dev *scmi_iio_dev;
 	s8 tstamp_scale_ns;
 	int i, err;
-
 	err = scmi_iio_check_valid_sensor(sensor);
 
 	if (err)
@@ -95,6 +105,29 @@ static int sensor_update_cb(struct notifier_block *nb, unsigned long event,
 		} else {
 			time_ns = time * int_pow(10, tstamp_scale_ns);
 		}
+
+		if (sensor->first_sample) {
+			struct timespec64 ts;
+			u64 boot_time_ns;
+			ktime_get_boottime_ts64(&ts);
+			boot_time_ns = (ts.tv_sec * NSEC_PER_SEC + ts.tv_nsec);
+
+			sensor->first_sample = false;
+			// HACK: this check assumes that the "host" system running SCMI
+			// sensor firmware is booted earlier-than the Android guest
+			// running this driver, and so sensor samples look as if they were
+			// coming from the future. If the Android guest is booted earlier,
+			// this check will fail to properly account for that, and - while the samples
+			// will not appear to be of suspicious time travel origin - they may
+			// be from too much in the past if no other adjustment is performed.
+			if (time_ns > boot_time_ns) {
+				sensor->delta_time_ns = time_ns - boot_time_ns + 100 * NSEC_PER_MSEC;
+				pr_info("sensor %s has time offset applied = %ld ns\n", sensor->sensor_info->name,
+					sensor->delta_time_ns);
+			}
+		}
+
+		time_ns -= sensor->delta_time_ns;
 	}
 
 	iio_push_to_buffers_with_timestamp(scmi_iio_dev, sensor->iio_buf,
@@ -619,6 +652,7 @@ scmi_iio_alloc_nonscalar_sensor(struct device *dev, struct scmi_handle *handle,
 	sensor = iio_priv(iio_dev_temp);
 	sensor->handle = handle;
 	sensor->sensor_info = sensor_info;
+	sensor->first_sample = true;
 	sensor->sensor_update_nb.notifier_call = sensor_update_cb;
 	iio_dev_temp->num_channels =
 		sensor_info->num_axis + SCMI_IIO_EXTRA_CHANNELS;
