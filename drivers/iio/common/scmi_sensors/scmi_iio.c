@@ -443,7 +443,7 @@ static void scmi_iio_set_data_channel(struct iio_chan_spec *iio_chan,
 static int scmi_iio_get_chan_modifier(const char *name,
 				      enum iio_modifier *modifier)
 {
-	/*char *pch, mod;
+	char *pch, mod;
 
 	if (!name)
 		return -EINVAL;
@@ -454,36 +454,20 @@ static int scmi_iio_get_chan_modifier(const char *name,
 
 	mod = *(pch + 1);
 	switch (mod) {
+	case 'x':
 	case 'X':
 		*modifier = IIO_MOD_X;
 		return 0;
 	case 'Y':
+	case 'y':
 		*modifier = IIO_MOD_Y;
 		return 0;
 	case 'Z':
+	case 'z':
 		*modifier = IIO_MOD_Z;
 		return 0;
 	default:
 		return -EINVAL;
-	}*/
-	if (strcasecmp(name, "X") == 0)
- 	{
- 		*modifier = IIO_MOD_X;
- 		return 0;
- 	}
- 	else if (strcasecmp(name, "Y") == 0)
- 	{
- 		*modifier = IIO_MOD_Y;
- 		return 0;
- 	}
- 	else if (strcasecmp(name, "Z") == 0)
- 	{
- 		*modifier = IIO_MOD_Z;
- 		return 0;
- 	}
- 	else
- 	{
- 		return -EINVAL;
 	}
 }
 
