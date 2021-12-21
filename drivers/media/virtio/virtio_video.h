@@ -101,6 +101,7 @@ typedef void (*virtio_video_resp_cb)(struct virtio_video_device *vvd,
 struct virtio_video_vbuffer {
 	char *buf;
 	int size;
+	uint32_t id;
 
 	void *data_buf;
 	uint32_t data_size;
@@ -114,19 +115,20 @@ struct virtio_video_vbuffer {
 	bool is_sync;
 	struct completion reclaimed;
 
-	struct list_head list;
+	struct list_head pending_list_entry;
 };
 
 struct virtio_video_cmd_queue {
 	struct virtqueue *vq;
+	bool ready;
 	spinlock_t qlock;
 	wait_queue_head_t reclaim_queue;
 };
 
 struct virtio_video_event_queue {
 	struct virtqueue *vq;
-	spinlock_t qlock;
-	struct work_struct reclaim_work;
+	bool ready;
+	struct work_struct work;
 };
 
 enum video_stream_state {
@@ -158,9 +160,9 @@ struct virtio_video_device {
 	struct virtio_video_cmd_queue commandq;
 	struct virtio_video_event_queue eventq;
 	wait_queue_head_t wq;
-	bool vq_ready;
 
 	struct kmem_cache *vbufs;
+	struct virtio_video_event *evts;
 
 	struct idr resource_idr;
 	spinlock_t resource_idr_lock;
@@ -187,6 +189,9 @@ struct virtio_video_device {
 	struct vb2_queue vb2_output_queue;
 	struct list_head pending_buf_list;
 	spinlock_t pending_buf_list_lock;
+
+	uint32_t vbufs_sent;
+	struct list_head pending_vbuf_list;
 
 	/* device_busy - to block multiple opens for non-m2m (camera) */
 	bool device_busy;
@@ -297,7 +302,7 @@ void virtio_video_state_update(struct virtio_video_stream *stream,
 
 int virtio_video_alloc_vbufs(struct virtio_video_device *vvd);
 void virtio_video_free_vbufs(struct virtio_video_device *vvd);
-int virtio_video_alloc_events(struct virtio_video_device *vvd, size_t num);
+int virtio_video_alloc_events(struct virtio_video_device *vvd);
 
 int virtio_video_device_init(struct virtio_video_device *vvd);
 void virtio_video_device_deinit(struct virtio_video_device *vvd);
@@ -322,21 +327,18 @@ int virtio_video_cmd_stream_destroy(struct virtio_video_device *vvd,
 				    uint32_t stream_id);
 int virtio_video_cmd_stream_drain(struct virtio_video_device *vvd,
 				  uint32_t stream_id);
-int virtio_video_cmd_resource_create(struct virtio_video_device *vvd,
+int virtio_video_cmd_resource_attach(struct virtio_video_device *vvd,
 				     uint32_t stream_id, uint32_t resource_id,
 				     enum virtio_video_queue_type queue_type,
-				     struct virtio_video_mem_entry *ents,
-				     unsigned int num_planes,
-				     unsigned int *num_entry);
-int
-virtio_video_cmd_resource_destroy_all(struct virtio_video_device *vvd,
-				      struct virtio_video_stream *stream,
-				      enum virtio_video_queue_type queue_type);
+				     void *buf, size_t buf_size);
 int virtio_video_cmd_resource_queue(struct virtio_video_device *vvd,
 				    uint32_t stream_id,
 				    struct virtio_video_buffer *virtio_vb,
 				    uint32_t data_size[], uint8_t num_data_size,
 				    enum virtio_video_queue_type queue_type);
+int virtio_video_cmd_queue_detach_resources(struct virtio_video_device *vvd,
+				struct virtio_video_stream *stream,
+				enum virtio_video_queue_type queue_type);
 int virtio_video_cmd_queue_clear(struct virtio_video_device *vvd,
 				 struct virtio_video_stream *stream,
 				 enum virtio_video_queue_type queue_type);
@@ -372,10 +374,11 @@ int virtio_video_queue_release_buffers(struct virtio_video_stream *stream,
 
 void virtio_video_cmd_cb(struct virtqueue *vq);
 void virtio_video_event_cb(struct virtqueue *vq);
-void virtio_video_reclaim_events(struct work_struct *work);
+void virtio_video_process_events(struct work_struct *work);
 
 void virtio_video_buf_done(struct virtio_video_buffer *virtio_vb,
-			   uint32_t flags, uint64_t timestamp, uint32_t size);
+			   uint32_t flags, uint64_t timestamp,
+			   uint32_t data_sizes[]);
 int virtio_video_buf_plane_init(uint32_t idx,uint32_t resource_id,
 				struct virtio_video_device *vvd,
 				struct virtio_video_stream *stream,
